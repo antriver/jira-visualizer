@@ -30,7 +30,7 @@ class JiraMermaidGraph
     public function getTasksFromEpic($epicKey)
     {
         $query = urlencode('"Epic Link" = '.$epicKey);
-        $fields = urlencode('key,summary,status,issueLinks'); // Task fields to retrieve
+        $fields = urlencode('key,summary,status,issueLinks,parent,assignee'); // Task fields to retrieve
         $url = "rest/api/3/search?jql=$query&fields=$fields";
 
         try {
@@ -65,113 +65,184 @@ class JiraMermaidGraph
         return [];
     }
 
-    public function generateMermaidGraph($epicKeys)
+    public function generateMermaidGraph($epicKey)
     {
-        $mermaidGraph = "graph TD\n";
+        $mermaidGraph = [];
+        $mermaidGraph[] = "graph TD";
+
+        // Define classDef styles for APP and EPOS tasks
+        $classDefs = [
+            'AppInProgress' => 'fill:#ffeaa7,stroke:#333,stroke-width:2px',
+            'AppBlocked' => 'fill:#e17055,stroke:#333,stroke-width:2px',
+            'EPOSInProgress' => 'fill:#81ecec,stroke:#333,stroke-width:2px',
+            'EPOSBlocked' => 'fill:#22a6b3,stroke:#333,stroke-width:2px',
+        ];
+
+        foreach ($classDefs as $className => $style) {
+            $mermaidGraph[] = "  classDef $className $style;";
+        }
 
         // Epic name for the feature branches (without adding a separate block for Epic)
-        $epicName = implode('', $epicKeys);  // Using the epic key as the name for the branch
-        $epicLabel = implode(', ', $epicKeys); // Use the Epic key as the label
 
         // Define APP and EPOS feature branches with Epic name
-        $mermaidGraph .= "  {$epicName}App[\"{$epicLabel} app feature branch\"]\n";
-        $mermaidGraph .= "  {$epicName}Epos[\"{$epicLabel} epos feature branch\"]\n";
-        $mermaidGraph .= "  class {$epicName}App fill:#c1d3f5,stroke:#333,stroke-width:2px\n";
-        $mermaidGraph .= "  class {$epicName}Epos fill:#e3f1f5,stroke:#333,stroke-width:2px\n";
+        $mermaidGraph[] = "  {$epicKey}App[\"{$epicKey} App Feature Branch\"]";
+        $mermaidGraph[] = "  class {$epicKey}App AppBlocked";
 
-        $tasksWithLinks = [];
-        $tasksWithoutDependencies = [];
+        $mermaidGraph[] = "  {$epicKey}EPOS[\"{$epicKey} EPOS Feature Branch\"]";
+        $mermaidGraph[] = "  class {$epicKey}EPOS EPOSBlocked";
 
-        // Loop through each Epic to fetch tasks and generate Mermaid nodes
-        foreach ($epicKeys as $epicKey) {
-            $tasks = $this->getTasksFromEpic($epicKey);
+        $tasks = [];
+        $taskLinks = [];
 
-            foreach ($tasks as $task) {
-                echo "{$task['key']} - {$task['fields']['summary']} ({$task['fields']['status']['name']})" . PHP_EOL;
+        // Fetch all the tasks and any linked issues.
+        $epicTasks = $this->getTasksFromEpic($epicKey);
 
-                // Skip tasks with a "Closed" or "Done" status
-                $status = $task['fields']['status']['name'];
-                if ($this->isClosedStatus($status)) {
-                    continue; // Skip closed tasks
-                }
+        // Build a list of tasks.
+        foreach ($epicTasks as $task) {
+            // echo "Processing {$task['key']} - {$task['fields']['summary']} ({$task['fields']['status']['name']})".PHP_EOL;
 
-                $taskKey = $task['key'];
-                // Use the task key directly for Mermaid compatibility
-                $mermaidTaskKey = $taskKey;
+            // Skip tasks with a "Closed" or "Done" status
+            $status = $task['fields']['status']['name'];
+            if ($this->isClosedStatus($status)) {
+                // echo "Task is closed. Skipping".PHP_EOL;
+                continue; // Skip closed tasks
+            }
 
-                $summary = $task['fields']['summary'];
-                $summary = str_replace('"', "'", $summary); // Replace double quotes with single quotes
+            $taskKey = $task['key'];
 
-                // Check for APP/EPOS label based on the task summary
-                $label = $this->getAppEposLabel($summary);
+            $tasks[$taskKey] = [
+                'key' => $taskKey,
+                'summary' => $task['fields']['summary'],
+                'status' => $task['fields']['status']['name'],
+                'label' => $this->getAppEposLabel($task['fields']['summary']),
+                'parentTaskKey' => $task['fields']['parent']['key'] ?? null,
+                'assignee' => $task['fields']['assignee']['displayName'] ?? null,
+            ];
 
-                // Assign color based on the status
-                $color = $this->getStatusColor($status);
+            // Fetch issue links separately for each task, because they're not coming from the initial search.
+            $taskLinks[$taskKey] = $this->getIssueLinks($taskKey);
+        }
 
-                // Add task to the Mermaid graph with the task key, summary, and status
-                $mermaidGraph .= "  {$mermaidTaskKey}[\"$taskKey<br/>$label<br/>$summary<br/><b>$status</b>\"]\n";
-                $mermaidGraph .= "  class $mermaidTaskKey fill:$color,stroke:#333,stroke-width:2px\n";
+        $tasksBlockedBy = [];
 
-                // Store tasks that are not blocked by anything else (for linking to feature branches)
-                $isBlocked = false;
-
-                // Fetch issue links separately for each task
-                $taskLinks = $this->getIssueLinks($taskKey);
-                $tasksWithLinks[$taskKey] = $taskLinks;
-
-                // Check if task is blocked by any other task
-                foreach ($taskLinks as $link) {
-                    if (isset($link['type']['name']) && $link['type']['name'] === 'Blocked by') {
-                        $isBlocked = true;
-                        break;
-                    }
-                }
-
-                // If not blocked by anything, add task to the corresponding feature branch
-                if (!$isBlocked) {
-                    if ($label === 'APP') {
-                        $mermaidGraph .= "  {$epicName}App --> {$mermaidTaskKey}\n";
+        // Build the links between tasks.
+        foreach ($taskLinks as $taskKey => $links) {
+            foreach ($links as $link) {
+                if ($link['type']['name'] === 'Blocks') {
+                    if (!empty($link['outwardIssue'])) {
+                        // This task blocks another task.
+                        $type = 'blocks';
+                        $linkedIssue = $link['outwardIssue'];
                     } else {
-                        $mermaidGraph .= "  {$epicName}Epos --> {$mermaidTaskKey}\n";
+                        // This task is blocked by another task.
+                        $type = 'blocked by';
+                        $linkedIssue = $link['inwardIssue'];
                     }
-                }
 
-                // Store task links for later processing
-                $tasksWithoutDependencies[$taskKey] = $taskLinks;
-            }
-        }
+                    $linkedIssueKey = $linkedIssue['key'];
+                    $linkedIssueSummary = $linkedIssue['fields']['summary'];
+                    $linkedIssueStatus = $linkedIssue['fields']['status']['name'];
+                    $sameApp = $this->getAppEposLabel($tasks[$taskKey]['summary']) === $this->getAppEposLabel(
+                            $linkedIssueSummary
+                        );
 
-        // Add edges for the links between tasks (e.g., blocked by / blocks)
-        foreach ($tasksWithLinks as $taskKey => $taskLinks) {
-            // Use the task key directly for Mermaid compatibility
-            $mermaidTaskKey = $taskKey;
+                    if ($this->isClosedStatus($linkedIssueStatus)) {
+                        // echo "Linked task $linkedIssueKey is closed. Skipping".PHP_EOL;
+                        continue; // Skip closed tasks
+                    }
 
-            foreach ($taskLinks as $link) {
-                // Determine the link type (blocks)
-                if (isset($link['type']['name'])) {
-                    $linkType = $link['type']['name'];
-                    $linkedIssueKey = $link['outwardIssue']['key'] ?? $link['inwardIssue']['key'];
-                    $mermaidLinkedIssueKey = $linkedIssueKey;
+                    if ($type === 'blocks') {
+                        // Add that the linked task is blocked by this task.
 
-                    // Get the labels (APP/EPOS) for both tasks involved in the link
-                    $taskLabel = $this->getAppEposLabel($task['fields']['summary']);
-                    $linkedTaskLabel = $this->getAppEposLabel($link['outwardIssue']['fields']['summary'] ?? $link['inwardIssue']['fields']['summary']);
-
-                    // Determine whether to use solid or dashed line based on task types
-                    if ($linkType === 'Blocks' && isset($link['outwardIssue'])) {
-                        if ($taskLabel === $linkedTaskLabel) {
-                            // Solid line
-                            $mermaidGraph .= "  {$mermaidTaskKey} --> {$mermaidLinkedIssueKey}\n";
-                        } else {
-                            // Dashed line
-                            $mermaidGraph .= "  {$mermaidTaskKey} -.-> {$mermaidLinkedIssueKey}\n";
+                        // If this task blocks the epic itself, handle it differently.
+                        if ($linkedIssueKey === $epicKey) {
+                            $label = $this->getAppEposLabel($linkedIssueSummary);
+                            $blockedEpicKey = $label === 'APP' ? "{$epicKey}APP" : "{$epicKey}EPOS";
+                            $tasksBlockedBy[$blockedEpicKey][$taskKey] = [
+                                'key' => $taskKey,
+                                'sameApp' => true,
+                            ];
+                            continue;
                         }
+
+                        $tasksBlockedBy[$linkedIssueKey][$taskKey] = [
+                            'key' => $linkedIssueKey,
+                            'sameApp' => $sameApp,
+                        ];
+                    } elseif ($type === 'blocked by') {
+                        // Add that this task is blocked by the linked task.
+                        $tasksBlockedBy[$taskKey][$linkedIssueKey] = [
+                            'key' => $taskKey,
+                            'sameApp' => $sameApp,
+                        ];
+                    }
+
+                    // If the linked issue is not present in the tasks list, add it in.
+                    if (empty($tasks[$linkedIssueKey])) {
+                        $tasks[$linkedIssueKey] = [
+                            'key' => $linkedIssueKey,
+                            'summary' => $linkedIssueSummary,
+                            'status' => $linkedIssueStatus,
+                            'label' => $this->getAppEposLabel($linkedIssueSummary),
+                            'assignee' => $linkedIssue['fields']['assignee']['displayName'] ?? null,
+                        ];
                     }
                 }
             }
         }
 
-        return $mermaidGraph;
+        // If there are any tasks not blocked by anything, mark them as blocked by the epic, but only
+        // if the issue's parent is the epic itself.
+        foreach ($tasks as $taskKey => $task) {
+            if (!isset($tasksBlockedBy[$taskKey])) {
+                if (empty($task['parentTaskKey']) || $task['parentTaskKey'] !== $epicKey) {
+                    continue;
+                }
+
+                $appLabel = $this->getAppEposLabel($task['summary']);
+                $blockingEpicKey = $appLabel === 'APP' ? "{$epicKey}App" : "{$epicKey}EPOS";
+
+                $tasksBlockedBy[$taskKey][$blockingEpicKey] = [
+                    'key' => $epicKey,
+                    'sameApp' => true,
+                ];
+            }
+        }
+
+        // Output the tasks.
+        foreach ($tasks as $taskKey => $task) {
+            $summary = str_replace('"', "'", $task['summary']); // Replace double quotes with single quotes
+
+            // Check for APP/EPOS label based on the task summary
+            $label = $this->getAppEposLabel($summary);
+
+            $status = $task['status'];
+
+            $assignee = $task['assignee'] ?? 'Unassigned';
+
+            // Add task to the Mermaid graph with the task key, summary, and status
+            $mermaidGraph[] = "  {$taskKey}[\"$taskKey<br/>$label<br/>$summary<br/><b>$status ($assignee)</b>\"]";
+
+            $isBlocked = $this->isBlockedStatus($status);
+            if ($label === 'APP') {
+                $mermaidGraph[] = "  class $taskKey ".($isBlocked ? 'AppBlocked' : 'AppInProgress');
+            } else {
+                $mermaidGraph[] = "  class $taskKey ".($isBlocked ? 'EPOSBlocked' : 'EPOSInProgress');
+            }
+        }
+
+        // Output the links between tasks.
+        foreach ($tasksBlockedBy as $blockeeKey => $blockingTasks) {
+            foreach ($blockingTasks as $blockerKey => $blockingTask) {
+                if ($blockingTask['sameApp']) {
+                    $mermaidGraph[] = "  {$blockerKey} --> {$blockeeKey}";
+                } else {
+                    $mermaidGraph[] = "  {$blockerKey} -.-> {$blockeeKey}";
+                }
+            }
+        }
+
+        return implode("\n", $mermaidGraph);
     }
 
     // Helper method to get APP/EPOS label based on task summary
@@ -185,39 +256,43 @@ class JiraMermaidGraph
         return "EPOS";
     }
 
-    // Helper method to determine the color based on task status
-    private function getStatusColor($status): string
+    private function isBlockedStatus(string $status): bool
     {
-        return match ($status) {
-            'To Do' => "#A0C8D4",
-            'In Progress' => "#A8D0E6",
-            'In Review' => "#F7A7C5",
-            'Done' => "#F06C9B",
-            default => "#FFFFFF",
-        };
+        return in_array(
+            $status,
+            [
+                'In Review',
+                'QA Ready',
+                'QA In Progress',
+            ]
+        );
     }
 
     // Helper method to check if a task is in a "closed" or completed status
     private function isClosedStatus($status): bool
     {
-        // Define which statuses are considered closed (Done, Closed, etc.)
-        $closedStatuses = ['Done', 'Closed', 'Resolved']; // Add more statuses as needed
-
-        return in_array($status, $closedStatuses);
+        return in_array(
+            $status,
+            [
+                'Done',
+                'Closed',
+                'Resolved',
+            ]
+        );
     }
 }
 
 $config = require 'config.php';
 
 // Example usage
-$epicKeys = ['PROP-292'];
+$epicKey = 'PROP-292';
 
 $jiraGraph = new JiraMermaidGraph(
     $config['jiraUrl'],
     $config['jiraUser'],
     $config['jiraApiToken']
 );
-$mermaidCode = $jiraGraph->generateMermaidGraph($epicKeys);
+$mermaidCode = $jiraGraph->generateMermaidGraph($epicKey);
 
 // Output Mermaid.js graph code
 echo PHP_EOL;
