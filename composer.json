@@ -1,4 +1,9 @@
 {
+    "autoload": {
+        "psr-4": {
+            "JiraVisualizer\\": "src/"
+        }
+    },
     "require": {
         "guzzlehttp/guzzle": "^7.9"
     }

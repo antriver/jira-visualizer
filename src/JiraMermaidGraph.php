@@ -1,6 +1,6 @@
 <?php
 
-require 'vendor/autoload.php'; // Make sure to include Guzzle via Composer
+namespace JiraVisualizer;
 
 use GuzzleHttp\Client;
 
@@ -123,6 +123,9 @@ class JiraMermaidGraph
             $taskLinks[$taskKey] = $this->getIssueLinks($taskKey);
         }
 
+        // Build an array of which tasks block a given task.
+        // The first-level keys are the task keys which may be blocked, and each item is an array of tasks that blocks
+        // that task.
         $tasksBlockedBy = [];
 
         // Build the links between tasks.
@@ -191,9 +194,9 @@ class JiraMermaidGraph
             }
         }
 
-        // If there are any tasks not blocked by anything, mark them as blocked by the epic, but only
-        // if the issue's parent is the epic itself.
         foreach ($tasks as $taskKey => $task) {
+            // If there are any tasks not blocked by anything, mark them as blocked by the epic, but only
+            // if the issue's parent is the epic itself.
             if (!isset($tasksBlockedBy[$taskKey])) {
                 if (empty($task['parentTaskKey']) || $task['parentTaskKey'] !== $epicKey) {
                     continue;
@@ -281,20 +284,3 @@ class JiraMermaidGraph
         );
     }
 }
-
-$config = require 'config.php';
-
-// Example usage
-$epicKey = 'PROP-292';
-
-$jiraGraph = new JiraMermaidGraph(
-    $config['jiraUrl'],
-    $config['jiraUser'],
-    $config['jiraApiToken']
-);
-$mermaidCode = $jiraGraph->generateMermaidGraph($epicKey);
-
-// Output Mermaid.js graph code
-echo PHP_EOL;
-echo $mermaidCode;
-echo PHP_EOL;
