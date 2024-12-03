@@ -8,9 +8,13 @@ class JiraMermaidGraph
 {
     private Client $client;
 
+    private array $tasks = [];
+
+    private array $taskLinks = [];
+
     // Constructor to initialize the Jira connection details
     public function __construct(
-        string $jiraUrl,
+        private string $jiraUrl,
         string $jiraUsername,
         string $jiraApiToken
     ) {
@@ -47,17 +51,17 @@ class JiraMermaidGraph
         return [];
     }
 
-    // Method to fetch issue links for a task
-    public function getIssueLinks($taskKey)
+    public function getJiraIssueData(string $taskKey): array
     {
-        $url = "rest/api/3/issue/$taskKey"; // Get issue details for a specific task
+        echo "Fetching data for issue $taskKey".PHP_EOL;
+
+        $url = "rest/api/3/issue/$taskKey?fields=issuelinks,assignee,parent"; // Get issue details for a specific task
 
         try {
             $response = $this->client->request('GET', $url);
             $data = json_decode($response->getBody(), true);
 
-            // Return the issue links if available
-            return $data['fields']['issuelinks'] ?? [];
+            return $data;
         } catch (\Exception $e) {
             echo "Error fetching issue links for task $taskKey: ".$e->getMessage();
         }
@@ -65,7 +69,54 @@ class JiraMermaidGraph
         return [];
     }
 
-    public function generateMermaidGraph($epicKey)
+    private function addJiraTaskToList(array $jiraIssueData): void
+    {
+        // Skip tasks with a "Closed" or "Done" status
+        $status = $jiraIssueData['fields']['status']['name'];
+        if ($this->isClosedStatus($status)) {
+            echo "Task {$jiraIssueData['key']} is closed. Skipping".PHP_EOL;
+            return;
+        }
+
+        $taskKey = $jiraIssueData['key'];
+
+        // Fetch any dependencies of this task.
+        // We need to fetch this again because the original response to get all tasks
+        // does not include the issue links.
+        $soloIssueData = $this->getJiraIssueData($taskKey);
+
+        $this->tasks[$taskKey] = [
+            'key' => $taskKey,
+            'summary' => $jiraIssueData['fields']['summary'],
+            'status' => $jiraIssueData['fields']['status']['name'],
+            'label' => $this->getAppEposLabel($jiraIssueData['fields']['summary']),
+            'parentTaskKey' => $soloIssueData['fields']['parent']['key'] ?? null,
+            'assignee' => $soloIssueData['fields']['assignee']['displayName'] ?? null,
+        ];
+
+        $issueLinks = $this->taskLinks[$taskKey] = $soloIssueData ? $soloIssueData['fields']['issuelinks'] : [];
+
+        // Add all the dependencies as tasks too.
+        foreach ($issueLinks as $issueLink) {
+            if ($issueLink['type']['name'] !== 'Blocks') {
+                // We only want to visualise blocking tasks, not "relates to".
+                continue;
+            }
+
+            if (!empty($issueLink['outwardIssue'])) {
+                $linkedIssue = $issueLink['outwardIssue'];
+            } else {
+                $linkedIssue = $issueLink['inwardIssue'];
+            }
+
+            $linkedIssueKey = $linkedIssue['key'];
+            if (empty($this->tasks[$linkedIssueKey])) {
+                $this->addJiraTaskToList($linkedIssue);
+            }
+        }
+    }
+
+    public function generateMermaidGraph(string $epicKey): string
     {
         $mermaidGraph = [];
         $mermaidGraph[] = "graph TD";
@@ -91,11 +142,10 @@ class JiraMermaidGraph
         $mermaidGraph[] = "  {$epicKey}EPOS[\"{$epicKey} EPOS Feature Branch\"]";
         $mermaidGraph[] = "  class {$epicKey}EPOS EPOSBlocked";
 
-        $tasks = [];
-        $taskLinks = [];
-
         // Fetch all the tasks and any linked issues.
         $epicTasks = $this->getTasksFromEpic($epicKey);
+
+        echo "Found ".count($epicTasks)." tasks for epic $epicKey".PHP_EOL;
 
         // Build a list of tasks.
         foreach ($epicTasks as $task) {
@@ -108,19 +158,7 @@ class JiraMermaidGraph
                 continue; // Skip closed tasks
             }
 
-            $taskKey = $task['key'];
-
-            $tasks[$taskKey] = [
-                'key' => $taskKey,
-                'summary' => $task['fields']['summary'],
-                'status' => $task['fields']['status']['name'],
-                'label' => $this->getAppEposLabel($task['fields']['summary']),
-                'parentTaskKey' => $task['fields']['parent']['key'] ?? null,
-                'assignee' => $task['fields']['assignee']['displayName'] ?? null,
-            ];
-
-            // Fetch issue links separately for each task, because they're not coming from the initial search.
-            $taskLinks[$taskKey] = $this->getIssueLinks($taskKey);
+            $this->addJiraTaskToList($task);
         }
 
         // Build an array of which tasks block a given task.
@@ -129,7 +167,7 @@ class JiraMermaidGraph
         $tasksBlockedBy = [];
 
         // Build the links between tasks.
-        foreach ($taskLinks as $taskKey => $links) {
+        foreach ($this->taskLinks as $taskKey => $links) {
             foreach ($links as $link) {
                 if ($link['type']['name'] === 'Blocks') {
                     if (!empty($link['outwardIssue'])) {
@@ -145,7 +183,7 @@ class JiraMermaidGraph
                     $linkedIssueKey = $linkedIssue['key'];
                     $linkedIssueSummary = $linkedIssue['fields']['summary'];
                     $linkedIssueStatus = $linkedIssue['fields']['status']['name'];
-                    $sameApp = $this->getAppEposLabel($tasks[$taskKey]['summary']) === $this->getAppEposLabel(
+                    $sameApp = $this->getAppEposLabel($this->tasks[$taskKey]['summary']) === $this->getAppEposLabel(
                             $linkedIssueSummary
                         );
 
@@ -181,39 +219,52 @@ class JiraMermaidGraph
                     }
 
                     // If the linked issue is not present in the tasks list, add it in.
-                    if (empty($tasks[$linkedIssueKey])) {
-                        $tasks[$linkedIssueKey] = [
-                            'key' => $linkedIssueKey,
-                            'summary' => $linkedIssueSummary,
-                            'status' => $linkedIssueStatus,
-                            'label' => $this->getAppEposLabel($linkedIssueSummary),
-                            'assignee' => $linkedIssue['fields']['assignee']['displayName'] ?? null,
-                        ];
+                    if (empty($this->tasks[$linkedIssueKey])) {
+                        $this->addJiraTaskToList($linkedIssue);
                     }
                 }
             }
         }
 
-        foreach ($tasks as $taskKey => $task) {
-            // If there are any tasks not blocked by anything, mark them as blocked by the epic, but only
-            // if the issue's parent is the epic itself.
-            if (!isset($tasksBlockedBy[$taskKey])) {
-                if (empty($task['parentTaskKey']) || $task['parentTaskKey'] !== $epicKey) {
-                    continue;
-                }
+        foreach ($this->tasks as $taskKey => $task) {
+            // If this task is in the epic, and it's not blocked by anything else in the epic,
+            // mark it as blocked by the appropriate feature branch.
 
-                $appLabel = $this->getAppEposLabel($task['summary']);
-                $blockingEpicKey = $appLabel === 'APP' ? "{$epicKey}App" : "{$epicKey}EPOS";
-
-                $tasksBlockedBy[$taskKey][$blockingEpicKey] = [
-                    'key' => $epicKey,
-                    'sameApp' => true,
-                ];
+            if (empty($task['parentTaskKey']) || $task['parentTaskKey'] !== $epicKey) {
+                // This task is not in the Epic.
+                continue;
             }
+
+            // Check if this is blocked by anything else in the Epic.
+            foreach ($tasksBlockedBy[$taskKey] ?? [] as $blockingTaskKey => $blockingTask) {
+                $blockingTaskData = $this->tasks[$blockingTaskKey];
+
+                if (
+                    !$this->isClosedStatus($blockingTaskData['status'])
+                    && $this->getAppEposLabel($blockingTaskData['summary']) === $this->getAppEposLabel($task['summary'])
+                    && !empty($blockingTaskData['parentTaskKey'])
+                    && $blockingTaskData['parentTaskKey'] === $epicKey
+                ) {
+                    // This task is blocked by something else in the Epic,
+                    // so a path back to the feature branch should already be established.
+                    continue 2;
+                }
+            }
+
+            // This task is not blocked by anything else in the Epic.
+
+            $appLabel = $this->getAppEposLabel($task['summary']);
+            $blockingEpicKey = $appLabel === 'APP' ? "{$epicKey}App" : "{$epicKey}EPOS";
+
+            // Add a line from the feature branch blocking this task.
+            $tasksBlockedBy[$taskKey][$blockingEpicKey] = [
+                'key' => $epicKey,
+                'sameApp' => true,
+            ];
         }
 
         // Output the tasks.
-        foreach ($tasks as $taskKey => $task) {
+        foreach ($this->tasks as $taskKey => $task) {
             $summary = str_replace('"', "'", $task['summary']); // Replace double quotes with single quotes
 
             // Check for APP/EPOS label based on the task summary
@@ -224,7 +275,8 @@ class JiraMermaidGraph
             $assignee = $task['assignee'] ?? 'Unassigned';
 
             // Add task to the Mermaid graph with the task key, summary, and status
-            $mermaidGraph[] = "  {$taskKey}[\"$taskKey<br/>$label<br/>$summary<br/><b>$status ($assignee)</b>\"]";
+            $url = "{$this->jiraUrl}/browse/$taskKey";
+            $mermaidGraph[] = "  {$taskKey}[\"<a href='$url' target='_blank'><strong>$taskKey</strong></a><br/>$label<br/>$summary<br/><b>$status ($assignee)</b>\"]";
 
             $isBlocked = $this->isBlockedStatus($status);
             if ($label === 'APP') {
@@ -264,6 +316,7 @@ class JiraMermaidGraph
         return in_array(
             $status,
             [
+                'On Hold',
                 'In Review',
                 'QA Ready',
                 'QA In Progress',
