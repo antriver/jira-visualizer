@@ -3,7 +3,7 @@
 Turns a Jira epic into an interactive dependency map. It fetches every open issue under the epic, follows
 their links, and writes a single self-contained HTML page you can pan, zoom and click through.
 
-![Example output](examples/demo.png)
+![Example output](examples/demo-flow.png)
 
 ## What it shows
 
