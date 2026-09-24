@@ -209,29 +209,29 @@ function render(){
     childParent[child] = parent;
     childKids[parent].push(child);
   });
-  // Nest a blocked task UNDER its blocker so the children form a blocking tree. The blocker has to
-  // sit inside the branch the blocked task already belongs to, so a real sub-task is never dragged
-  // out of its own parent. The blocked task's now-redundant line to its old parent is dropped
-  // (see elist below).
+  // Nest a blocker UNDER the task it blocks, so work flows from the far end of the tree toward the
+  // epic. The blocked task has to sit inside the branch the blocker already belongs to, so a real
+  // sub-task is never dragged out of its own parent. The blocker's now-redundant line to its old
+  // parent is dropped (see elist below).
   const isAncestor = (a, k) => { for (let x = k, n = 0; x !== undefined && n < 5000; x = childParent[x], n++){ if (x === a) return true; } return false; };
   const depthOf = k => { let d = 0; for (let x = childParent[k]; x !== undefined && d < 5000; x = childParent[x]) d++; return d; };
   const blockLinks = DATA.edges
     .filter(e => e.kind === 'block' && elById[e.head] && elById[(e.from === e.head) ? e.to : e.from])
     .map(e => ({ blocked: e.head, blocker: (e.from === e.head) ? e.to : e.from }));
-  // Keep passing until nothing moves. A blocker is often nested itself on a later pass, and only
-  // then do the tasks it blocks become eligible. Deepest blocker first, so a task with several
-  // blockers ends up below all of them rather than above the ones handled later.
+  // Keep passing until nothing moves. A blocked task is often nested itself on a later pass, and
+  // only then do its blockers become eligible. Deepest blocked task first, so a task that blocks
+  // several others ends up further from the epic than all of them.
   for (let pass = 0; pass < 100; pass++){
     let moved = false;
-    blockLinks.slice().sort((a, b) => depthOf(b.blocker) - depthOf(a.blocker)).forEach(({ blocked, blocker }) => {
-      const p = childParent[blocked];
-      if (p === undefined || p === blocker) return;
-      if (!isAncestor(p, blocker)) return;        // blocker must be inside the blocked task's branch
-      if (isAncestor(blocked, blocker)) return;   // no cycle
-      const arr = childKids[p], i = arr.indexOf(blocked);
+    blockLinks.slice().sort((a, b) => depthOf(b.blocked) - depthOf(a.blocked)).forEach(({ blocked, blocker }) => {
+      const p = childParent[blocker];
+      if (p === undefined || p === blocked) return;
+      if (!isAncestor(p, blocked)) return;        // blocked task must be inside the blocker's branch
+      if (isAncestor(blocker, blocked)) return;   // no cycle
+      const arr = childKids[p], i = arr.indexOf(blocker);
       if (i >= 0) arr.splice(i, 1);
-      childParent[blocked] = blocker;
-      childKids[blocker].push(blocked);
+      childParent[blocker] = blocked;
+      childKids[blocked].push(blocker);
       moved = true;
     });
     if (!moved) break;
@@ -239,6 +239,10 @@ function render(){
   const isNested = k => childParent[k] !== undefined && childParent[k] !== epic;
   const rootOf = k => { let r = k, n = 0; while (isNested(r) && n++ < 5000) r = childParent[r]; return r; };
   const nestedKids = k => (k === epic ? [] : childKids[k]);
+
+  // The layout is built top-down with the epic at the top, then mirrored vertically once every card
+  // is placed, so the epic ends up at the bottom and each sub-tree sits above the card it feeds into.
+  // "Beneath" and "top" in the layout code below refer to the unmirrored space.
 
   // Recursively size each node's box: the card plus its child sub-tree laid out in a single
   // centred row beneath it, so all siblings read as equals at the same height directly under it.
@@ -274,8 +278,6 @@ function render(){
   const pos = {};
   function place(k, cx, top){
     const s = sizeOf(k), b = box[k];
-    elById[k].style.left = (cx - s.w / 2) + 'px';
-    elById[k].style.top  = top + 'px';
     pos[k] = { x: cx, y: top + s.h / 2, w: s.w, h: s.h };
     if (!b.rows.length) return;
     let y = top + s.h + GAP_Y;
@@ -296,12 +298,14 @@ function render(){
   g.setGraph({ rankdir:'TB', nodesep:34, ranksep:78, marginx:28, marginy:28 });
   g.setDefaultEdgeLabel(() => ({}));
   roots.forEach(k => g.setNode(k, { width: box[k].w, height: box[k].h }));
-  // Every direct child of the epic stays on the top row: only the epic itself may rank one below
-  // it. Otherwise a deep dependency reaching into a child's sub-tree would drag that whole child
-  // (and its siblings would no longer line up) far down the page.
+  // Each edge runs from its head (the dependent end, closer to the epic) to its tail, so after the
+  // mirror every blocker and sub-task lands further from the epic than the task it feeds.
+  // Every direct child of the epic stays on the row next to the epic: only the epic itself may rank
+  // closer. Otherwise a deep dependency reaching into a child's sub-tree would drag that whole child
+  // (and its siblings would no longer line up) far away from the epic.
   const epicChild = k => childParent[k] === epic;
   DATA.edges.forEach(e => {
-    const a = rootOf(e.from), b = rootOf(e.to);
+    const a = rootOf(e.head), b = rootOf(e.from === e.head ? e.to : e.from);
     if (a === b || !g.hasNode(a) || !g.hasNode(b)) return;
     if (epicChild(b) && a !== epic) return;
     g.setEdge(a, b, { weight: e.kind === 'child' ? 30 : 1, minlen: 1 });
@@ -316,6 +320,12 @@ function render(){
   roots.forEach(k => { const nd = g.node(k); place(k, nd.x, rankTop[Math.round(nd.y)]); });
 
   const W = g.graph().width, H = g.graph().height;
+  Object.keys(pos).forEach(k => {
+    const p = pos[k];
+    p.y = H - p.y;
+    elById[k].style.left = (p.x - p.w / 2) + 'px';
+    elById[k].style.top  = (p.y - p.h / 2) + 'px';
+  });
   stage.style.width = W + 'px';
   stage.style.height = H + 'px';
 
@@ -354,8 +364,8 @@ function render(){
   // buses (pass A) are recorded first, so the block / cause links (pass B) route clear of them too.
   const usedH = [], usedV = [];   // drawn segments: {c: fixed coord, lo, hi: span along the run}
 
-  // (A) parent -> children: one clean org-chart "bus" per parent (trunk up to the parent, a
-  //     horizontal bar, then a straight branch straight down to each child). No squish, no detours.
+  // (A) children -> parent: one clean org-chart "bus" per parent (a straight branch down from each
+  //     child, a horizontal bar, then a trunk down into the parent). No squish, no detours.
   const childByParent = {};
   elist.forEach(x => {
     if (x.e.kind !== 'child') return;
@@ -367,16 +377,16 @@ function render(){
     const kk = childByParent[pk].filter(k => pos[k]);
     const kids = kk.map(k => pos[k]);
     if (!kids.length) return;
-    const pBottom = P.y + P.h / 2;
-    const busY = pBottom + 16;   // hug the parent, leaving the rest of the gap clear for block lanes
+    const pTop = P.y - P.h / 2;
+    const busY = pTop - 16;   // hug the parent, leaving the rest of the gap clear for block lanes
     const minX = Math.min(P.x, ...kids.map(c => c.x)), maxX = Math.max(P.x, ...kids.map(c => c.x));
-    let g = seg(`M ${P.x.toFixed(1)} ${busY.toFixed(1)} L ${P.x.toFixed(1)} ${pBottom.toFixed(1)}`, 'child', true);
+    let g = seg(`M ${P.x.toFixed(1)} ${busY.toFixed(1)} L ${P.x.toFixed(1)} ${pTop.toFixed(1)}`, 'child', true);
     if (maxX - minX > 1) g += seg(`M ${minX.toFixed(1)} ${busY.toFixed(1)} L ${maxX.toFixed(1)} ${busY.toFixed(1)}`, 'child', false);
-    kids.forEach(c => { g += seg(`M ${c.x.toFixed(1)} ${busY.toFixed(1)} L ${c.x.toFixed(1)} ${(c.y - c.h / 2).toFixed(1)}`, 'child', false); });
+    kids.forEach(c => { g += seg(`M ${c.x.toFixed(1)} ${(c.y + c.h / 2).toFixed(1)} L ${c.x.toFixed(1)} ${busY.toFixed(1)}`, 'child', false); });
     edgesSvg += `<g class="edge" data-parent="${pk}" data-children="${kk.join(',')}">${g}</g>`;
-    usedV.push({ c: P.x, lo: busY, hi: pBottom });
+    usedV.push({ c: P.x, lo: busY, hi: pTop });
     usedH.push({ c: busY, lo: minX, hi: maxX });
-    kids.forEach(c => usedV.push({ c: c.x, lo: c.y - c.h / 2, hi: busY }));
+    kids.forEach(c => usedV.push({ c: c.x, lo: c.y + c.h / 2, hi: busY }));
   });
 
   // (B) block / cause links: route each as an orthogonal line that bends AROUND the cards. A port
@@ -418,13 +428,13 @@ function render(){
     addAttach(x.e.from, x.fromSide, x, 'from', x.e.to);
     addAttach(x.e.to,   x.toSide,   x, 'to',   x.e.from);
   });
-  // The child bus already occupies the centre of a parent's bottom (its trunk) and the centre of
-  // each child's top (its branch). Reserve those points so a block / cause port never lands on the
-  // same spot a bus line enters or leaves.
+  // The child bus already occupies the centre of a parent's top (its trunk) and the centre of
+  // each child's bottom (its branch). Reserve those points so a block / cause port never lands on
+  // the same spot a bus line enters or leaves.
   const busBottom = {}, busTop = {};
   Object.keys(childByParent).forEach(pk => {
-    if (pos[pk] && childByParent[pk].some(k => pos[k])) busBottom[pk] = true;
-    childByParent[pk].forEach(k => { if (pos[k]) busTop[k] = true; });
+    if (pos[pk] && childByParent[pk].some(k => pos[k])) busTop[pk] = true;
+    childByParent[pk].forEach(k => { if (pos[k]) busBottom[k] = true; });
   });
   const port = {};
   Object.keys(attach).forEach(nk => {
@@ -511,7 +521,7 @@ function render(){
     return db - da;
   });
   // Push a stub-end further out along its normal if its turn level lands on top of a run already
-  // drawn (e.g. a bus bar right below a card) — that's where the short approach legs would graze.
+  // drawn (e.g. a bus bar right above a card), which is where the short approach legs would graze.
   const dodge = (pt, nx, ny) => {
     for (let n = 0; n < 8; n++){
       if (ny !== 0){ const g = usedH.find(s => Math.abs(s.c - pt.y) < 12 && pt.x + 1 > s.lo && pt.x - 1 < s.hi); if (!g) break; pt.y = g.c + ny * 13; }

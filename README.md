@@ -7,10 +7,10 @@ their links, and writes a single self-contained HTML page you can pan, zoom and 
 
 ## What it shows
 
-- The epic at the top, with its child issues laid out in a tree beneath it
+- The epic at the bottom, with its child issues laid out in a tree above it, each feeding down into its parent
 - Blocking links (orange) and "causes" links (dashed purple) between issues, including issues outside the epic
 - Each card's key, summary, type, status and assignee, linking back to Jira
-- Blocked issues are placed under the issue blocking them, so the order work has to happen in reads top to bottom
+- Blockers are placed above the issue they block, so the order work has to happen in reads top to bottom and ends at the epic
 
 Done, Closed and Resolved issues are left out.
 
