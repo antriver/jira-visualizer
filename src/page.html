@@ -1,0 +1,595 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__EPIC_KEY__ · Dependency Map</title>
+<style>
+  :root{
+    --ink:#2b2b3a;
+    --muted:#7a7a93;
+    --line:rgba(120,120,160,.16);
+    --card:rgba(255,255,255,.82);
+    --shadow:0 10px 30px -12px rgba(40,40,90,.28);
+  }
+  *{box-sizing:border-box;}
+  html,body{height:100%;margin:0;}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+    color:var(--ink);
+    overflow:hidden;
+    background:
+      radial-gradient(900px 620px at 10% 4%, rgba(199,210,254,.26), transparent 62%),
+      radial-gradient(820px 600px at 92% 96%, rgba(251,207,232,.24), transparent 60%),
+      radial-gradient(760px 540px at 84% 6%, rgba(167,243,208,.18), transparent 60%),
+      linear-gradient(160deg,#fbfbff 0%,#f5f7fc 50%,#fcf8fb 100%);
+    background-attachment:fixed;
+  }
+  /* subtle grain for texture */
+  body::before{
+    content:"";position:fixed;inset:0;pointer-events:none;z-index:9999;opacity:.04;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  /* ---- canvas ---- */
+  #canvas{position:fixed;inset:0;cursor:grab;}
+  #canvas.grabbing{cursor:grabbing;}
+  #viewport{position:absolute;top:0;left:0;transform-origin:0 0;will-change:transform;}
+  #stage{position:relative;}
+  #edges{position:absolute;top:0;left:0;overflow:visible;pointer-events:none;}
+
+  /* ---- nodes ---- */
+  .node{position:absolute;width:256px;padding:14px 15px;border-radius:16px;box-shadow:var(--shadow);cursor:pointer;opacity:0;animation:fade .5s ease forwards;transition:transform .18s ease, box-shadow .2s ease;text-decoration:none;color:inherit;display:block;}
+  @keyframes fade{to{opacity:1;}}
+  @keyframes fadeDim{to{opacity:.55;}}
+  .node--dim{animation-name:fadeDim;}   /* Backlog tasks sit faded */
+  .node:hover{transform:translateY(-3px) scale(1.018);box-shadow:0 18px 40px -14px rgba(40,40,90,.42);z-index:6;}
+  .node__key{font-weight:700;font-size:16px;color:#2b2b3a;}
+  .node__summary{font-size:16px;line-height:1.4;color:#33333f;margin:8px 0 11px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;}
+  .node__foot{display:flex;align-items:center;gap:8px;}
+  .pill{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;padding:4px 10px;border-radius:999px;white-space:nowrap;background:rgba(255,255,255,.6);color:#43435a;border:1px solid rgba(120,120,160,.18);}
+  .who{font-size:12px;color:#6a6a83;font-weight:500;margin-left:auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:110px;}
+
+  .node--epic{width:460px;padding:28px;border-radius:24px;box-shadow:0 26px 60px -16px rgba(40,40,90,.30), 0 0 0 5px rgba(255,255,255,.55);}
+  .node--epic .node__key{font-size:34px;font-weight:800;}
+  .node--epic .node__summary{font-size:21px;font-weight:700;-webkit-line-clamp:4;margin:12px 0 14px;}
+  .node--epic .pill{font-size:15px;padding:6px 14px;}
+
+  /* other (non-main) epics: larger than a task, smaller than the main epic */
+  .node--epic2{width:336px;padding:18px;border-radius:18px;box-shadow:0 18px 44px -16px rgba(40,40,90,.26), 0 0 0 3px rgba(255,255,255,.5);}
+  .node--epic2 .node__key{font-size:23px;font-weight:800;}
+  .node--epic2 .node__summary{font-size:17px;font-weight:600;-webkit-line-clamp:4;}
+  .node--epic2 .pill{font-size:13px;}
+
+  .node--sub{width:200px;padding:11px 12px;border-radius:13px;}
+  .node--sub .node__key{font-size:13px;}
+  .node--sub .node__summary{font-size:12.5px;-webkit-line-clamp:2;margin:5px 0 8px;}
+  .node--sub .pill{font-size:11px;padding:3px 8px;}
+
+  /* ---- floating reset button ---- */
+  .fab{position:fixed;right:18px;bottom:18px;z-index:50;font:inherit;font-size:13px;font-weight:600;color:#2b2b3a;background:rgba(255,255,255,.8);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid rgba(120,120,160,.18);border-radius:12px;padding:9px 14px;cursor:pointer;box-shadow:0 6px 18px -8px rgba(40,40,90,.35);transition:transform .12s ease;}
+  .fab:hover{transform:translateY(-1px);}
+
+  @media (max-width:640px){ .node--epic{width:256px;} }
+</style>
+</head>
+<body>
+  <div id="canvas">
+    <div id="viewport">
+      <div id="stage">
+        <svg id="edges"></svg>
+      </div>
+    </div>
+  </div>
+
+  <button id="fit" class="fab">Reset view</button>
+
+<script src="https://cdn.jsdelivr.net/npm/@dagrejs/dagre@1.1.4/dist/dagre.min.js"></script>
+<script>
+const DATA = __GRAPH_JSON__;
+
+// Status colours/icons and issue-type icons come from config.php. Anything unlisted gets a neutral default.
+const STATUSES = __STATUSES_JSON__;
+const statusColor = s => (STATUSES[s] && STATUSES[s].color) || '#94a3b8';
+const statusEmoji = s => (STATUSES[s] && STATUSES[s].emoji) || '⚪️';
+
+const TYPE_EMOJI = __TYPES_JSON__;
+const typeEmoji = t => TYPE_EMOJI[t] || '📌';
+
+function tint(hex, a){
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},${a})`;
+}
+
+function wash(hex){
+  const n = parseInt(hex.slice(1), 16);
+  const r = (n>>16)&255, g = (n>>8)&255, b = n&255;
+  const m = c => Math.round(c * 0.14 + 255 * 0.86);
+  return `rgb(${m(r)},${m(g)},${m(b)})`;
+}
+
+const stage = document.getElementById('stage');
+const svg = document.getElementById('edges');
+const elById = {};
+
+function makeNode(n){
+  // A real anchor so the native right-click menu (Open in New Tab, Copy Link) works.
+  const el = document.createElement('a');
+  el.href = n.url;
+  el.target = '_blank';
+  el.rel = 'noopener';
+  el.className = 'node'
+    + (n.isEpic ? ' node--epic' : (n.type === 'Epic' ? ' node--epic2' : ''))
+    + (n.type === 'Sub-task' ? ' node--sub' : '')
+    + (n.status === 'Backlog' ? ' node--dim' : '');
+  el.dataset.key = n.key;
+  const sc = statusColor(n.status);
+
+  // Card background: washed status colour (same for every card, epic included)
+  el.style.background = wash(sc);
+  el.style.border = '1px solid ' + tint(sc, .35);
+
+  const key = document.createElement('span');
+  key.className = 'node__key';
+  key.textContent = n.key;
+
+  const summary = document.createElement('div');
+  summary.className = 'node__summary';
+  summary.textContent = typeEmoji(n.type) + ' ' + n.summary;
+
+  const foot = document.createElement('div');
+  foot.className = 'node__foot';
+  const pill = document.createElement('span');
+  pill.className = 'pill';
+  pill.textContent = statusEmoji(n.status) + ' ' + (n.status || 'Unknown');
+  foot.append(pill);
+  if (n.assignee){
+    const who = document.createElement('span');
+    who.className = 'who'; who.textContent = n.assignee;
+    foot.append(who);
+  }
+
+  el.append(key, summary, foot);
+
+  // The anchor opens Jira on a normal click; suppress navigation if it was actually a pan/drag.
+  let dragStart = null;
+  el.addEventListener('mousedown', e => { dragStart = { x: e.clientX, y: e.clientY }; });
+  el.addEventListener('click', e => {
+    if (dragStart && (Math.abs(e.clientX - dragStart.x) > 6 || Math.abs(e.clientY - dragStart.y) > 6)) e.preventDefault();
+  });
+
+  return el;
+}
+
+// Turn a polyline (array of {x,y}) into an SVG path with collinear points dropped and small
+// rounded corners. Used to draw the orthogonal routes the obstacle router produces.
+function roundedPath(pts){
+  if (pts.length < 2) return '';
+  const p = [pts[0]];
+  for (let i = 1; i < pts.length - 1; i++){
+    const a = p[p.length - 1], b = pts[i], c = pts[i + 1];
+    const collinear = (Math.abs(a.x - b.x) < 0.5 && Math.abs(b.x - c.x) < 0.5)
+                   || (Math.abs(a.y - b.y) < 0.5 && Math.abs(b.y - c.y) < 0.5);
+    if (!collinear) p.push(b);
+  }
+  p.push(pts[pts.length - 1]);
+  if (p.length === 2) return `M ${p[0].x.toFixed(1)} ${p[0].y.toFixed(1)} L ${p[1].x.toFixed(1)} ${p[1].y.toFixed(1)}`;
+  let d = `M ${p[0].x.toFixed(1)} ${p[0].y.toFixed(1)}`;
+  for (let i = 1; i < p.length - 1; i++){
+    const a = p[i - 1], b = p[i], c = p[i + 1];
+    const d1 = Math.hypot(b.x - a.x, b.y - a.y) || 1, d2 = Math.hypot(c.x - b.x, c.y - b.y) || 1;
+    const r = Math.min(8, d1 / 2, d2 / 2);
+    const e1 = { x: b.x - (b.x - a.x) / d1 * r, y: b.y - (b.y - a.y) / d1 * r };
+    const e2 = { x: b.x + (c.x - b.x) / d2 * r, y: b.y + (c.y - b.y) / d2 * r };
+    d += ` L ${e1.x.toFixed(1)} ${e1.y.toFixed(1)} Q ${b.x.toFixed(1)} ${b.y.toFixed(1)} ${e2.x.toFixed(1)} ${e2.y.toFixed(1)}`;
+  }
+  const last = p[p.length - 1];
+  return d + ` L ${last.x.toFixed(1)} ${last.y.toFixed(1)}`;
+}
+
+function render(){
+  // build + attach every node so the browser can measure real sizes
+  DATA.nodes.forEach((n, i) => {
+    const el = makeNode(n);
+    el.style.animationDelay = Math.min(i * 10, 650) + 'ms';
+    stage.appendChild(el);
+    elById[n.key] = el;
+  });
+  const sizeOf = k => ({ w: elById[k].offsetWidth, h: elById[k].offsetHeight });
+  const epic = DATA.epic.key;
+
+  // Child hierarchy from child / sub-task links. A node nests under its parent unless that parent
+  // is the epic (the epic's direct children stay top-level, laid out by dagre).
+  const childParent = {}, childKids = {};
+  DATA.nodes.forEach(n => { childKids[n.key] = []; });
+  DATA.edges.forEach(e => {
+    if (e.kind !== 'child') return;
+    const parent = e.head, child = (e.from === parent) ? e.to : e.from;
+    if (child === epic || !elById[parent] || !elById[child]) return;
+    childParent[child] = parent;
+    childKids[parent].push(child);
+  });
+  // Nest a blocked task UNDER its blocker so the children form a blocking tree. The blocker has to
+  // sit inside the branch the blocked task already belongs to, so a real sub-task is never dragged
+  // out of its own parent. The blocked task's now-redundant line to its old parent is dropped
+  // (see elist below).
+  const isAncestor = (a, k) => { for (let x = k, n = 0; x !== undefined && n < 5000; x = childParent[x], n++){ if (x === a) return true; } return false; };
+  const depthOf = k => { let d = 0; for (let x = childParent[k]; x !== undefined && d < 5000; x = childParent[x]) d++; return d; };
+  const blockLinks = DATA.edges
+    .filter(e => e.kind === 'block' && elById[e.head] && elById[(e.from === e.head) ? e.to : e.from])
+    .map(e => ({ blocked: e.head, blocker: (e.from === e.head) ? e.to : e.from }));
+  // Keep passing until nothing moves. A blocker is often nested itself on a later pass, and only
+  // then do the tasks it blocks become eligible. Deepest blocker first, so a task with several
+  // blockers ends up below all of them rather than above the ones handled later.
+  for (let pass = 0; pass < 100; pass++){
+    let moved = false;
+    blockLinks.slice().sort((a, b) => depthOf(b.blocker) - depthOf(a.blocker)).forEach(({ blocked, blocker }) => {
+      const p = childParent[blocked];
+      if (p === undefined || p === blocker) return;
+      if (!isAncestor(p, blocker)) return;        // blocker must be inside the blocked task's branch
+      if (isAncestor(blocked, blocker)) return;   // no cycle
+      const arr = childKids[p], i = arr.indexOf(blocked);
+      if (i >= 0) arr.splice(i, 1);
+      childParent[blocked] = blocker;
+      childKids[blocker].push(blocked);
+      moved = true;
+    });
+    if (!moved) break;
+  }
+  const isNested = k => childParent[k] !== undefined && childParent[k] !== epic;
+  const rootOf = k => { let r = k, n = 0; while (isNested(r) && n++ < 5000) r = childParent[r]; return r; };
+  const nestedKids = k => (k === epic ? [] : childKids[k]);
+
+  // Recursively size each node's box: the card plus its child sub-tree laid out in a single
+  // centred row beneath it, so all siblings read as equals at the same height directly under it.
+  // Siblings never wrap to a second row (MAX_ROW = Infinity) — the group just stretches wider.
+  const GAP_X = 28, GAP_Y = 52, ROW_GAP = 22, MAX_ROW = Infinity;
+  const box = {};
+  function measure(k){
+    if (box[k]) return;
+    const s = sizeOf(k), ch = nestedKids(k);
+    if (!ch.length){ box[k] = { w: s.w, h: s.h, rows: [] }; return; }
+    ch.forEach(measure);
+    const items = ch.map(c => ({ k: c, w: box[c].w, h: box[c].h }));
+    const maxW = Math.max(s.w, MAX_ROW);
+    const rows = []; let row = [], rw = 0;
+    items.forEach(it => {
+      const add = it.w + (row.length ? GAP_X : 0);
+      if (row.length && rw + add > maxW){ rows.push(row); row = []; rw = 0; }
+      row.push(it); rw += it.w + (row.length > 1 ? GAP_X : 0);
+    });
+    if (row.length) rows.push(row);
+    // Stagger alternate rows by a quarter-cell each way (so adjacent rows differ by half a card),
+    // breaking the rigid column grid into a brick pattern that reads less "vertical".
+    const cell = Math.max(...items.map(x => x.w)) + GAP_X;
+    const stagger = rows.length > 1 ? cell / 4 : 0;
+    let bw = s.w, bh = s.h + GAP_Y;
+    rows.forEach(r => {
+      bw = Math.max(bw, r.reduce((a, x) => a + x.w, 0) + GAP_X * (r.length - 1));
+      bh += Math.max(...r.map(x => x.h)) + ROW_GAP;
+    });
+    box[k] = { w: bw + stagger * 2, h: bh - ROW_GAP, rows, stagger };
+  }
+
+  const pos = {};
+  function place(k, cx, top){
+    const s = sizeOf(k), b = box[k];
+    elById[k].style.left = (cx - s.w / 2) + 'px';
+    elById[k].style.top  = top + 'px';
+    pos[k] = { x: cx, y: top + s.h / 2, w: s.w, h: s.h };
+    if (!b.rows.length) return;
+    let y = top + s.h + GAP_Y;
+    b.rows.forEach((r, ri) => {
+      const rW = r.reduce((a, x) => a + x.w, 0) + GAP_X * (r.length - 1);
+      const shift = (ri % 2 ? 1 : -1) * (b.stagger || 0);   // alternate rows offset for a brick layout
+      let x = cx - rW / 2 + shift;
+      r.forEach(it => { place(it.k, x + it.w / 2, y); x += it.w + GAP_X; });
+      y += Math.max(...r.map(x2 => x2.h)) + ROW_GAP;
+    });
+  }
+
+  // dagre lays out the top-level nodes (anything not nested under a non-epic parent), each
+  // inflated to reserve room for its nested sub-tree; cross-sub-tree links drive the placement.
+  const roots = DATA.nodes.map(n => n.key).filter(k => !isNested(k));
+  roots.forEach(measure);
+  const g = new dagre.graphlib.Graph();
+  g.setGraph({ rankdir:'TB', nodesep:34, ranksep:78, marginx:28, marginy:28 });
+  g.setDefaultEdgeLabel(() => ({}));
+  roots.forEach(k => g.setNode(k, { width: box[k].w, height: box[k].h }));
+  // Every direct child of the epic stays on the top row: only the epic itself may rank one below
+  // it. Otherwise a deep dependency reaching into a child's sub-tree would drag that whole child
+  // (and its siblings would no longer line up) far down the page.
+  const epicChild = k => childParent[k] === epic;
+  DATA.edges.forEach(e => {
+    const a = rootOf(e.from), b = rootOf(e.to);
+    if (a === b || !g.hasNode(a) || !g.hasNode(b)) return;
+    if (epicChild(b) && a !== epic) return;
+    g.setEdge(a, b, { weight: e.kind === 'child' ? 30 : 1, minlen: 1 });
+  });
+  dagre.layout(g);
+
+  // dagre centres each box on its rank line, so cards with tall sub-trees would sit higher than
+  // their shorter siblings. Align every card on a rank to a common top (the highest box-top on that
+  // rank) so siblings share an exact height; their sub-trees still hang below from that line.
+  const rankTop = {};
+  roots.forEach(k => { const nd = g.node(k), rk = Math.round(nd.y), t = nd.y - box[k].h / 2; if (rankTop[rk] === undefined || t < rankTop[rk]) rankTop[rk] = t; });
+  roots.forEach(k => { const nd = g.node(k); place(k, nd.x, rankTop[Math.round(nd.y)]); });
+
+  const W = g.graph().width, H = g.graph().height;
+  stage.style.width = W + 'px';
+  stage.style.height = H + 'px';
+
+  // draw every edge as a clipped curve between the real cards; arrowhead on the head (dependent end)
+  svg.setAttribute('width', W);
+  svg.setAttribute('height', H);
+  let markup = `<defs>
+    <marker id="ah-block" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#f4a23a"/></marker>
+    <marker id="ah-child" markerWidth="8" markerHeight="8" refX="6.8" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#9aa3c0"/></marker>
+    <marker id="ah-cause" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#c4b5fd"/></marker>
+  </defs>`;
+  const elist = DATA.edges.map((e, idx) => ({ e, idx })).filter(x => {
+    if (!pos[x.e.from] || !pos[x.e.to]) return false;
+    // drop a child's line to its parent if the child was re-nested under a blocking sibling
+    if (x.e.kind === 'child'){
+      const child = (x.e.from === x.e.head) ? x.e.to : x.e.from;
+      if (childParent[child] !== x.e.head) return false;
+    }
+    return true;
+  });
+
+  // build one path-pair (halo + coloured line) for a segment
+  const seg = (d, kind, arrow) => {
+    const stroke = kind === 'child' ? '#9aa3c0' : (kind === 'cause' ? '#c4b5fd' : '#f4a23a');
+    const w = kind === 'child' ? 1.6 : 2.2;
+    const dash = kind === 'cause' ? ' stroke-dasharray="7 5" stroke-linecap="round"' : '';   // block + child solid, cause dashed
+    const op = kind === 'child' ? 0.85 : 0.95;
+    const mk = arrow ? ` marker-end="url(#ah-${kind})"` : '';
+    return `<path d="${d}" fill="none" stroke="#f6f6fb" stroke-width="${w + 4}" opacity="0.95" stroke-linecap="round" stroke-linejoin="round"/>`
+         + `<path d="${d}" fill="none" stroke="${stroke}" stroke-width="${w}" opacity="${op}" stroke-linejoin="round"${mk}${dash}/>`;
+  };
+  let edgesSvg = '';
+
+  // Lane bookkeeping shared by both passes: every horizontal / vertical run drawn is recorded here
+  // so later runs can slide into a free lane and never lie on top of an earlier one. The child
+  // buses (pass A) are recorded first, so the block / cause links (pass B) route clear of them too.
+  const usedH = [], usedV = [];   // drawn segments: {c: fixed coord, lo, hi: span along the run}
+
+  // (A) parent -> children: one clean org-chart "bus" per parent (trunk up to the parent, a
+  //     horizontal bar, then a straight branch straight down to each child). No squish, no detours.
+  const childByParent = {};
+  elist.forEach(x => {
+    if (x.e.kind !== 'child') return;
+    const parent = x.e.head, child = (x.e.from === parent) ? x.e.to : x.e.from;
+    (childByParent[parent] = childByParent[parent] || []).push(child);
+  });
+  Object.keys(childByParent).forEach(pk => {
+    const P = pos[pk]; if (!P) return;
+    const kk = childByParent[pk].filter(k => pos[k]);
+    const kids = kk.map(k => pos[k]);
+    if (!kids.length) return;
+    const pBottom = P.y + P.h / 2;
+    const busY = pBottom + 16;   // hug the parent, leaving the rest of the gap clear for block lanes
+    const minX = Math.min(P.x, ...kids.map(c => c.x)), maxX = Math.max(P.x, ...kids.map(c => c.x));
+    let g = seg(`M ${P.x.toFixed(1)} ${busY.toFixed(1)} L ${P.x.toFixed(1)} ${pBottom.toFixed(1)}`, 'child', true);
+    if (maxX - minX > 1) g += seg(`M ${minX.toFixed(1)} ${busY.toFixed(1)} L ${maxX.toFixed(1)} ${busY.toFixed(1)}`, 'child', false);
+    kids.forEach(c => { g += seg(`M ${c.x.toFixed(1)} ${busY.toFixed(1)} L ${c.x.toFixed(1)} ${(c.y - c.h / 2).toFixed(1)}`, 'child', false); });
+    edgesSvg += `<g class="edge" data-parent="${pk}" data-children="${kk.join(',')}">${g}</g>`;
+    usedV.push({ c: P.x, lo: busY, hi: pBottom });
+    usedH.push({ c: busY, lo: minX, hi: maxX });
+    kids.forEach(c => usedV.push({ c: c.x, lo: c.y - c.h / 2, hi: busY }));
+  });
+
+  // (B) block / cause links: route each as an orthogonal line that bends AROUND the cards. A port
+  //     attaches to whichever card side faces the other task (top, bottom, left or right) so an
+  //     arrow enters from the nearest edge; ports fan out along that edge and the middle runs are
+  //     pushed into separate lanes, so arrows and lines never overlap.
+  const deps = elist.filter(x => x.e.kind !== 'child');
+
+  const MARGIN = 12, STUB = MARGIN + 8;
+  const rect = {};
+  DATA.nodes.forEach(n => {
+    const p = pos[n.key]; if (!p) return;
+    rect[n.key] = { x0: p.x - p.w / 2 - MARGIN, x1: p.x + p.w / 2 + MARGIN, y0: p.y - p.h / 2 - MARGIN, y1: p.y + p.h / 2 + MARGIN };
+  });
+  const rectList = Object.values(rect);
+  // Is a horizontal / vertical segment clear of every card (except the link's own two endpoints)?
+  const clearH = (y, xa, xb, s1, s2) => { const lo = Math.min(xa, xb), hi = Math.max(xa, xb); return !rectList.some(r => r !== s1 && r !== s2 && y > r.y0 && y < r.y1 && hi > r.x0 && lo < r.x1); };
+  const clearV = (x, ya, yb, s1, s2) => { const lo = Math.min(ya, yb), hi = Math.max(ya, yb); return !rectList.some(r => r !== s1 && r !== s2 && x > r.x0 && x < r.x1 && hi > r.y0 && lo < r.y1); };
+
+  // Which side of node N faces node O? Compare the gaps between the two card rectangles: enter from
+  // the left/right edge only when O sits clearly beside N (its horizontal gap is the bigger one),
+  // otherwise enter top/bottom. This keeps the downward-tree look and avoids an arrow hugging an
+  // edge when the other task is really above or below.
+  const NORM = { top: [0, -1], bottom: [0, 1], left: [-1, 0], right: [1, 0] };
+  const pickSide = (N, O) => {
+    const gx = Math.max(O.x - O.w / 2 - (N.x + N.w / 2), (N.x - N.w / 2) - (O.x + O.w / 2));
+    const gy = Math.max(O.y - O.h / 2 - (N.y + N.h / 2), (N.y - N.h / 2) - (O.y + O.h / 2));
+    if (gx > gy && gx > 24) return O.x > N.x ? 'right' : 'left';
+    return O.y >= N.y ? 'bottom' : 'top';
+  };
+  const attach = {};
+  const addAttach = (nk, side, x, end, other) => {
+    (attach[nk] = attach[nk] || { top: [], bottom: [], left: [], right: [] })[side].push({ x, end, other });
+  };
+  deps.forEach(x => {
+    const A = pos[x.e.from], B = pos[x.e.to];
+    x.fromSide = pickSide(A, B);
+    x.toSide   = pickSide(B, A);
+    addAttach(x.e.from, x.fromSide, x, 'from', x.e.to);
+    addAttach(x.e.to,   x.toSide,   x, 'to',   x.e.from);
+  });
+  // The child bus already occupies the centre of a parent's bottom (its trunk) and the centre of
+  // each child's top (its branch). Reserve those points so a block / cause port never lands on the
+  // same spot a bus line enters or leaves.
+  const busBottom = {}, busTop = {};
+  Object.keys(childByParent).forEach(pk => {
+    if (pos[pk] && childByParent[pk].some(k => pos[k])) busBottom[pk] = true;
+    childByParent[pk].forEach(k => { if (pos[k]) busTop[k] = true; });
+  });
+  const port = {};
+  Object.keys(attach).forEach(nk => {
+    const r = pos[nk];
+    ['top', 'bottom', 'left', 'right'].forEach(side => {
+      const list = attach[nk][side]; if (!list.length) return;
+      const horiz = side === 'top' || side === 'bottom';          // ports spread along X (else along Y)
+      const [nx, ny] = NORM[side];
+      const lo = horiz ? r.x - r.w * 0.4 : r.y - r.h * 0.4;
+      const hi = horiz ? r.x + r.w * 0.4 : r.y + r.h * 0.4;
+      const minGap = 18;
+      list.forEach(p => { const o = pos[p.other]; p.want = Math.max(lo, Math.min(hi, horiz ? o.x : o.y)); });
+      // a fixed slot the bus holds on this side; real ports must keep clear of it
+      const reserved = (side === 'bottom' && busBottom[nk]) || (side === 'top' && busTop[nk]) ? r.x : null;
+      const items = list.map(p => ({ p, want: p.want }));
+      if (reserved !== null) items.push({ want: reserved, bus: true });
+      items.sort((a, b) => a.want - b.want);
+      let prev = -1e9;
+      items.forEach(it => { it.v = Math.max(it.want, prev + minGap); prev = it.v; });
+      const ov = items[items.length - 1].v - hi;
+      if (ov > 0) items.forEach(it => { it.v = Math.max(lo, it.v - ov); });
+      const fixed = horiz ? (side === 'bottom' ? r.y + r.h / 2 : r.y - r.h / 2)
+                          : (side === 'right'  ? r.x + r.w / 2 : r.x - r.w / 2);
+      items.forEach(it => { if (it.bus) return; const p = it.p; port[p.x.idx + '-' + p.end] = { x: horiz ? it.v : fixed, y: horiz ? fixed : it.v, nx, ny }; });
+    });
+  });
+
+  // Connect two stub-ends with an orthogonal path that clears every box. The middle run is placed
+  // in a free lane: we track the segments already drawn and slide the channel (in 11px steps) until
+  // it no longer lies on top of a parallel run that shares its span — so lines never overlap.
+  // How much a candidate run would lie on top of runs already drawn in the same lane (0 = free).
+  const ovH = (y, xa, xb) => { const lo = Math.min(xa, xb), hi = Math.max(xa, xb); let s = 0; usedH.forEach(g => { if (Math.abs(g.c - y) < 9){ const o = Math.min(hi, g.hi) - Math.max(lo, g.lo); if (o > 0) s += o; } }); return s; };
+  const ovV = (x, ya, yb) => { const lo = Math.min(ya, yb), hi = Math.max(ya, yb); let s = 0; usedV.forEach(g => { if (Math.abs(g.c - x) < 9){ const o = Math.min(hi, g.hi) - Math.max(lo, g.lo); if (o > 0) s += o; } }); return s; };
+  // Pick the channel coord that clears all boxes with the least overlap of existing runs, breaking
+  // ties toward `ideal`. A free lane (overlap 0) always wins, so parallel runs separate.
+  const chooseChan = (ideal, cands, clear, ov) => {
+    let best = null, bestScore = Infinity;
+    for (const c of cands){ if (!clear(c)) continue; const s = ov(c) * 1000 + Math.abs(c - ideal); if (s < bestScore){ bestScore = s; best = c; } }
+    return best;
+  };
+  function connect(a1, a2, tp, hp, sT, sH){
+    if (Math.abs(a1.x - a2.x) < 1 && clearV(a1.x, a1.y, a2.y, sT, sH)){ usedV.push({ c: a1.x, lo: Math.min(a1.y, a2.y), hi: Math.max(a1.y, a2.y) }); return []; }
+    if (Math.abs(a1.y - a2.y) < 1 && clearH(a1.y, a1.x, a2.x, sT, sH)){ usedH.push({ c: a1.y, lo: Math.min(a1.x, a2.x), hi: Math.max(a1.x, a2.x) }); return []; }
+    const idH = (a1.y + a2.y) / 2, idV = (a1.x + a2.x) / 2;
+    const ysC = [idH]; for (let k = 1; k <= 80; k++) ysC.push(idH + k * 11, idH - k * 11); rectList.forEach(r => ysC.push(r.y0 - 2, r.y1 + 2));
+    const xsC = [idV]; for (let k = 1; k <= 80; k++) xsC.push(idV + k * 11, idV - k * 11); rectList.forEach(r => xsC.push(r.x0 - 2, r.x1 + 2));
+    ysC.sort((p, q) => Math.abs(p - idH) - Math.abs(q - idH));
+    xsC.sort((p, q) => Math.abs(p - idV) - Math.abs(q - idV));
+    const chY = chooseChan(idH, ysC, y => clearV(a1.x, a1.y, y, sT, sH) && clearH(y, a1.x, a2.x, sT, sH) && clearV(a2.x, y, a2.y, sT, sH), y => ovH(y, a1.x, a2.x));
+    const chX = chooseChan(idV, xsC, x => clearH(a1.y, a1.x, x, sT, sH) && clearV(x, a1.y, a2.y, sT, sH) && clearH(a2.y, x, a2.x, sT, sH), x => ovV(x, a1.y, a2.y));
+    // Pick the orientation whose whole shape (channel + its two legs) overlaps existing runs least,
+    // so a leg never has to lie along a bus when the other orientation is clear. Ties fall back to
+    // the natural choice (vertical exits -> horizontal channel, and vice versa).
+    const totH = chY === null ? Infinity : ovH(chY, a1.x, a2.x) + ovV(a1.x, a1.y, chY) + ovV(a2.x, chY, a2.y);
+    const totV = chX === null ? Infinity : ovV(chX, a1.y, a2.y) + ovH(a1.y, a1.x, chX) + ovH(a2.y, chX, a2.x);
+    let useH;
+    if (Math.abs(totH - totV) < 1){
+      useH = (tp.ny !== 0 && hp.ny !== 0) ? true : (tp.ny === 0 && hp.ny === 0) ? false : Math.abs(a1.x - a2.x) >= Math.abs(a1.y - a2.y);
+      if (useH && chY === null) useH = false;
+      if (!useH && chX === null) useH = true;
+    } else {
+      useH = totH < totV;
+    }
+    if (useH && chY !== null){
+      usedH.push({ c: chY, lo: Math.min(a1.x, a2.x), hi: Math.max(a1.x, a2.x) });
+      usedV.push({ c: a1.x, lo: Math.min(a1.y, chY), hi: Math.max(a1.y, chY) });
+      usedV.push({ c: a2.x, lo: Math.min(chY, a2.y), hi: Math.max(chY, a2.y) });
+      return [{ x: a1.x, y: chY }, { x: a2.x, y: chY }];
+    }
+    if (chX !== null){
+      usedV.push({ c: chX, lo: Math.min(a1.y, a2.y), hi: Math.max(a1.y, a2.y) });
+      usedH.push({ c: a1.y, lo: Math.min(a1.x, chX), hi: Math.max(a1.x, chX) });
+      usedH.push({ c: a2.y, lo: Math.min(chX, a2.x), hi: Math.max(chX, a2.x) });
+      return [{ x: chX, y: a1.y }, { x: chX, y: a2.y }];
+    }
+    return null;
+  }
+
+  // Route the longest links first: a long run touches many lanes, so it should claim a clear one
+  // while the field is empty; the short links then slot into the gaps around it.
+  deps.sort((a, b) => {
+    const da = Math.abs(pos[a.e.from].x - pos[a.e.to].x) + Math.abs(pos[a.e.from].y - pos[a.e.to].y);
+    const db = Math.abs(pos[b.e.from].x - pos[b.e.to].x) + Math.abs(pos[b.e.from].y - pos[b.e.to].y);
+    return db - da;
+  });
+  // Push a stub-end further out along its normal if its turn level lands on top of a run already
+  // drawn (e.g. a bus bar right below a card) — that's where the short approach legs would graze.
+  const dodge = (pt, nx, ny) => {
+    for (let n = 0; n < 8; n++){
+      if (ny !== 0){ const g = usedH.find(s => Math.abs(s.c - pt.y) < 12 && pt.x + 1 > s.lo && pt.x - 1 < s.hi); if (!g) break; pt.y = g.c + ny * 13; }
+      else { const g = usedV.find(s => Math.abs(s.c - pt.x) < 12 && pt.y + 1 > s.lo && pt.y - 1 < s.hi); if (!g) break; pt.x = g.c + nx * 13; }
+    }
+    return pt;
+  };
+  deps.forEach(x => {
+    const e = x.e, headFromTail = (e.head === e.from);
+    const tailKey = headFromTail ? e.to : e.from, headKey = headFromTail ? e.from : e.to;
+    const tp = port[x.idx + '-' + (headFromTail ? 'to' : 'from')];   // tail (source) port
+    const hp = port[x.idx + '-' + (headFromTail ? 'from' : 'to')];   // head (arrowhead) port
+    const sT = rect[tailKey], sH = rect[headKey];
+    const a1 = dodge({ x: tp.x + tp.nx * STUB, y: tp.y + tp.ny * STUB }, tp.nx, tp.ny);
+    const a2 = dodge({ x: hp.x + hp.nx * STUB, y: hp.y + hp.ny * STUB }, hp.nx, hp.ny);
+    const mid = connect(a1, a2, tp, hp, sT, sH);
+    const pathPts = mid
+      ? [{ x: tp.x, y: tp.y }, a1, ...mid, a2, { x: hp.x, y: hp.y }]
+      : [{ x: tp.x, y: tp.y }, a1, { x: a2.x, y: a1.y }, a2, { x: hp.x, y: hp.y }];  // last resort
+    edgesSvg += `<g>${seg(roundedPath(pathPts), e.kind, true)}</g>`;
+  });
+
+  svg.innerHTML = markup + edgesSvg;
+
+  fitView();
+}
+
+/* ---------- pan & zoom ---------- */
+const canvas = document.getElementById('canvas');
+const viewport = document.getElementById('viewport');
+let view = { x:0, y:0, k:1 };
+
+function applyView(){
+  viewport.style.transform = `translate(${view.x}px,${view.y}px) scale(${view.k})`;
+}
+function fitView(){
+  const W = stage.offsetWidth, H = stage.offsetHeight;
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const pad = 24;
+  const k = Math.min((vw - pad) / W, (vh - pad) / H, 1.4);
+  view.k = Math.max(k, 0.12);
+  view.x = (vw - W * view.k) / 2;
+  view.y = (vh - H * view.k) / 2;
+  applyView();
+}
+document.getElementById('fit').addEventListener('click', fitView);
+window.addEventListener('resize', fitView);
+
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  const factor = Math.exp(-e.deltaY * 0.0012);
+  const nk = Math.min(Math.max(view.k * factor, 0.1), 2.6);
+  // zoom toward the cursor
+  view.x = e.clientX - (e.clientX - view.x) * (nk / view.k);
+  view.y = e.clientY - (e.clientY - view.y) * (nk / view.k);
+  view.k = nk;
+  applyView();
+}, { passive:false });
+
+let panning = false, startX = 0, startY = 0;
+canvas.addEventListener('mousedown', e => {
+  if (e.target.closest('.node')) return; // let clicks on cards work
+  panning = true; startX = e.clientX - view.x; startY = e.clientY - view.y;
+  canvas.classList.add('grabbing');
+});
+window.addEventListener('mousemove', e => {
+  if (!panning) return;
+  view.x = e.clientX - startX; view.y = e.clientY - startY;
+  applyView();
+});
+window.addEventListener('mouseup', () => { panning = false; canvas.classList.remove('grabbing'); });
+
+// wait for fonts so node measurements (and therefore layout) are accurate
+if (document.fonts && document.fonts.ready){
+  document.fonts.ready.then(render);
+} else {
+  window.addEventListener('load', render);
+}
+</script>
+</body>
+</html>
