@@ -41,7 +41,7 @@ return [
     'publishCommand' => null,
 
     // Optional URL printed after a successful publish, so you can open the page straight away.
-    // {key} is replaced with the epic key.
+    // {key} is replaced with the epic key, and a timestamp is added so browsers skip their cache.
     // 'publishUrl' => 'https://server.example.com/jira/{key}.html',
     'publishUrl' => null,
 ];

@@ -50,8 +50,10 @@ if (!empty($config['publishCommand'])) {
     passthru($publishCmd.' 2>&1', $publishCode);
     if ($publishCode === 0) {
         echo "Published {$epicKey}\n";
-        if (!empty($config['publishUrl'])) {
-            echo strtr($config['publishUrl'], ['{key}' => $epicKey]).PHP_EOL;
+        if ($publishUrl = strtr($config['publishUrl'] ?? '', ['{key}' => $epicKey])) {
+            // A timestamp on the end, so the browser fetches the new page instead of a cached copy.
+            $separator = str_contains($publishUrl, '?') ? '&' : '?';
+            echo $publishUrl.$separator.'v='.time().PHP_EOL;
         }
     } else {
         echo "WARNING: publish command failed (exit {$publishCode})".PHP_EOL;
