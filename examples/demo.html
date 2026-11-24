@@ -50,12 +50,11 @@
   .pill{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;padding:4px 10px;border-radius:999px;white-space:nowrap;background:rgba(255,255,255,.6);color:#43435a;border:1px solid rgba(120,120,160,.18);}
   .who{font-size:12px;color:#6a6a83;font-weight:500;margin-left:auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:110px;}
 
-  .node--epic{width:460px;padding:28px;border-radius:24px;box-shadow:0 26px 60px -16px rgba(40,40,90,.30), 0 0 0 5px rgba(255,255,255,.55);}
-  .node--epic .node__key{font-size:34px;font-weight:800;}
-  .node--epic .node__summary{font-size:21px;font-weight:700;-webkit-line-clamp:4;margin:12px 0 14px;}
-  .node--epic .pill{font-size:15px;padding:6px 14px;}
+  /* an issue only pulled in as a blocker or cause, not part of the epic's own hierarchy */
+  .node__tag{display:inline-block;vertical-align:2px;margin-left:8px;font-size:10.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:2px 7px;border-radius:999px;color:#6a6a83;background:rgba(255,255,255,.7);border:1px dashed rgba(106,106,131,.5);}
+  .node--sub .node__tag{font-size:9.5px;padding:1px 6px;}
 
-  /* other (non-main) epics: larger than a task, smaller than the main epic */
+  /* epics: larger than a task */
   .node--epic2{width:336px;padding:18px;border-radius:18px;box-shadow:0 18px 44px -16px rgba(40,40,90,.26), 0 0 0 3px rgba(255,255,255,.5);}
   .node--epic2 .node__key{font-size:23px;font-weight:800;}
   .node--epic2 .node__summary{font-size:17px;font-weight:600;-webkit-line-clamp:4;}
@@ -70,7 +69,10 @@
   .fab{position:fixed;right:18px;bottom:18px;z-index:50;font:inherit;font-size:13px;font-weight:600;color:#2b2b3a;background:rgba(255,255,255,.8);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid rgba(120,120,160,.18);border-radius:12px;padding:9px 14px;cursor:pointer;box-shadow:0 6px 18px -8px rgba(40,40,90,.35);transition:transform .12s ease;}
   .fab:hover{transform:translateY(-1px);}
 
-  @media (max-width:640px){ .node--epic{width:256px;} }
+  /* ---- epic header ---- */
+  .page-header{position:fixed;top:18px;left:18px;z-index:50;max-width:min(560px, calc(100vw - 36px));padding:16px 20px;border-radius:18px;text-decoration:none;color:inherit;display:block;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);box-shadow:0 10px 30px -14px rgba(40,40,90,.35);}
+  .page-header__key{font-size:24px;font-weight:800;}
+  .page-header__summary{font-size:17px;font-weight:700;line-height:1.35;color:#33333f;margin:6px 0 10px;}
 </style>
 </head>
 <body>
@@ -82,6 +84,7 @@
     </div>
   </div>
 
+  <a id="header" class="page-header" target="_blank" rel="noopener"></a>
   <button id="fit" class="fab">Reset view</button>
 
 <script src="https://cdn.jsdelivr.net/npm/@dagrejs/dagre@1.1.4/dist/dagre.min.js"></script>
@@ -112,14 +115,50 @@ const stage = document.getElementById('stage');
 const svg = document.getElementById('edges');
 const elById = {};
 
-function makeNode(n){
+/**
+ * Returns a status pill element for an issue.
+ */
+function makePill(status){
+  const pill = document.createElement('span');
+  pill.className = 'pill';
+  pill.textContent = statusEmoji(status) + ' ' + (status || 'Unknown');
+  return pill;
+}
+
+/**
+ * Fills the fixed page header with the epic's key, summary and status, linking to it in Jira.
+ */
+function makeHeader(n){
+  const el = document.getElementById('header');
+  el.href = n.url;
+  const sc = statusColor(n.status);
+  el.style.background = wash(sc);
+  el.style.border = '1px solid ' + tint(sc, .35);
+  document.title = n.key + ' · ' + n.summary;
+
+  const key = document.createElement('div');
+  key.className = 'page-header__key';
+  key.textContent = n.key;
+
+  const summary = document.createElement('div');
+  summary.className = 'page-header__summary';
+  summary.textContent = typeEmoji(n.type) + ' ' + n.summary;
+
+  el.append(key, summary, makePill(n.status));
+}
+
+/**
+ * Builds the card for an issue. An issue that is outside the epic (only pulled in through a link)
+ * gets a tag saying so.
+ */
+function makeNode(n, outside){
   // A real anchor so the native right-click menu (Open in New Tab, Copy Link) works.
   const el = document.createElement('a');
   el.href = n.url;
   el.target = '_blank';
   el.rel = 'noopener';
   el.className = 'node'
-    + (n.isEpic ? ' node--epic' : (n.type === 'Epic' ? ' node--epic2' : ''))
+    + (n.type === 'Epic' ? ' node--epic2' : '')
     + (n.type === 'Sub-task' ? ' node--sub' : '')
     + (n.status === 'Backlog' ? ' node--dim' : '');
   el.dataset.key = n.key;
@@ -139,17 +178,21 @@ function makeNode(n){
 
   const foot = document.createElement('div');
   foot.className = 'node__foot';
-  const pill = document.createElement('span');
-  pill.className = 'pill';
-  pill.textContent = statusEmoji(n.status) + ' ' + (n.status || 'Unknown');
-  foot.append(pill);
+  foot.append(makePill(n.status));
   if (n.assignee){
     const who = document.createElement('span');
     who.className = 'who'; who.textContent = n.assignee;
     foot.append(who);
   }
 
-  el.append(key, summary, foot);
+  el.append(key);
+  if (outside){
+    const tag = document.createElement('span');
+    tag.className = 'node__tag';
+    tag.textContent = 'Outside epic';
+    el.append(tag);
+  }
+  el.append(summary, foot);
 
   // The anchor opens Jira on a normal click; suppress navigation if it was actually a pan/drag.
   let dragStart = null;
@@ -188,39 +231,61 @@ function roundedPath(pts){
 }
 
 function render(){
+  const epic = DATA.epic.key;
+  const epicNode = DATA.nodes.find(n => n.key === epic);
+  makeHeader(epicNode);
+
+  // The epic is shown in the header, not as a card. Its links to its own children are dropped too:
+  // almost every task is a child of the epic, so those links say nothing about the order of work and
+  // would only pull every task onto one row. The epic still gets a card when it blocks or causes
+  // something (or is blocked), since that is a real dependency.
+  const edges = DATA.edges.filter(e => !(e.kind === 'child' && e.head === epic));
+  const epicLinked = edges.some(e => e.from === epic || e.to === epic);
+  const nodes = DATA.nodes.filter(n => n.key !== epic || epicLinked);
+
+  // Everything reachable from the epic through child links belongs to it. The rest was only pulled
+  // in by a blocks / causes link, and gets tagged as outside the epic.
+  const inEpic = new Set([epic]);
+  for (let grew = true; grew;){
+    grew = false;
+    DATA.edges.forEach(e => {
+      if (e.kind !== 'child') return;
+      const child = (e.from === e.head) ? e.to : e.from;
+      if (inEpic.has(e.head) && !inEpic.has(child)){ inEpic.add(child); grew = true; }
+    });
+  }
+
   // build + attach every node so the browser can measure real sizes
-  DATA.nodes.forEach((n, i) => {
-    const el = makeNode(n);
+  nodes.forEach((n, i) => {
+    const el = makeNode(n, !inEpic.has(n.key));
     el.style.animationDelay = Math.min(i * 10, 650) + 'ms';
     stage.appendChild(el);
     elById[n.key] = el;
   });
   const sizeOf = k => ({ w: elById[k].offsetWidth, h: elById[k].offsetHeight });
-  const epic = DATA.epic.key;
 
-  // Child hierarchy from child / sub-task links. A node nests under its parent unless that parent
-  // is the epic (the epic's direct children stay top-level, laid out by dagre).
+  // Child hierarchy from child / sub-task links: a node nests under its parent.
   const childParent = {}, childKids = {};
-  DATA.nodes.forEach(n => { childKids[n.key] = []; });
-  DATA.edges.forEach(e => {
+  nodes.forEach(n => { childKids[n.key] = []; });
+  edges.forEach(e => {
     if (e.kind !== 'child') return;
     const parent = e.head, child = (e.from === parent) ? e.to : e.from;
     if (child === epic || !elById[parent] || !elById[child]) return;
     childParent[child] = parent;
     childKids[parent].push(child);
   });
-  // Nest a blocker UNDER the task it blocks, so work flows from the far end of the tree toward the
-  // epic. The blocked task has to sit inside the branch the blocker already belongs to, so a real
+  // Nest a blocker UNDER the task it blocks, so work flows from the far end of a sub-task tree
+  // toward its root. The blocked task has to sit inside the branch the blocker already belongs to, so a real
   // sub-task is never dragged out of its own parent. The blocker's now-redundant line to its old
   // parent is dropped (see elist below).
   const isAncestor = (a, k) => { for (let x = k, n = 0; x !== undefined && n < 5000; x = childParent[x], n++){ if (x === a) return true; } return false; };
   const depthOf = k => { let d = 0; for (let x = childParent[k]; x !== undefined && d < 5000; x = childParent[x]) d++; return d; };
-  const blockLinks = DATA.edges
+  const blockLinks = edges
     .filter(e => e.kind === 'block' && elById[e.head] && elById[(e.from === e.head) ? e.to : e.from])
     .map(e => ({ blocked: e.head, blocker: (e.from === e.head) ? e.to : e.from }));
   // Keep passing until nothing moves. A blocked task is often nested itself on a later pass, and
   // only then do its blockers become eligible. Deepest blocked task first, so a task that blocks
-  // several others ends up further from the epic than all of them.
+  // several others ends up further from the root than all of them.
   for (let pass = 0; pass < 100; pass++){
     let moved = false;
     blockLinks.slice().sort((a, b) => depthOf(b.blocked) - depthOf(a.blocked)).forEach(({ blocked, blocker }) => {
@@ -236,26 +301,17 @@ function render(){
     });
     if (!moved) break;
   }
-  const isNested = k => childParent[k] !== undefined && childParent[k] !== epic;
+  const isNested = k => childParent[k] !== undefined;
   const rootOf = k => { let r = k, n = 0; while (isNested(r) && n++ < 5000) r = childParent[r]; return r; };
-  const nestedKids = k => (k === epic ? [] : childKids[k]);
 
-  // The layout is built top-down with the epic at the top, then mirrored vertically once every card
-  // is placed, so the epic ends up at the bottom and each sub-tree sits above the card it feeds into.
+  // The layout is built top-down with the dependent tasks at the top, then mirrored vertically once
+  // every card is placed, so each blocker and sub-tree sits above the card it feeds into.
   // "Beneath" and "top" in the layout code below refer to the unmirrored space.
 
-  // Recursively size each node's box: the card plus its child sub-tree laid out in a single
-  // centred row beneath it, so all siblings read as equals at the same height directly under it.
-  // Siblings never wrap to a second row (MAX_ROW = Infinity) — the group just stretches wider.
   const GAP_X = 28, GAP_Y = 52, ROW_GAP = 22, MAX_ROW = Infinity;
-  const box = {};
-  function measure(k){
-    if (box[k]) return;
-    const s = sizeOf(k), ch = nestedKids(k);
-    if (!ch.length){ box[k] = { w: s.w, h: s.h, rows: [] }; return; }
-    ch.forEach(measure);
-    const items = ch.map(c => ({ k: c, w: box[c].w, h: box[c].h }));
-    const maxW = Math.max(s.w, MAX_ROW);
+
+  // Split items ({w}) into rows no wider than maxW. An item wider than maxW gets a row to itself.
+  const wrapRows = (items, maxW) => {
     const rows = []; let row = [], rw = 0;
     items.forEach(it => {
       const add = it.w + (row.length ? GAP_X : 0);
@@ -263,13 +319,28 @@ function render(){
       row.push(it); rw += it.w + (row.length > 1 ? GAP_X : 0);
     });
     if (row.length) rows.push(row);
+    return rows;
+  };
+  const rowWidth = r => r.reduce((a, x) => a + x.w, 0) + GAP_X * (r.length - 1);
+
+  // Recursively size each node's box: the card plus its child sub-tree laid out in a single
+  // centred row beneath it, so all siblings read as equals at the same height directly under it.
+  // Siblings never wrap to a second row (MAX_ROW = Infinity) — the group just stretches wider.
+  const box = {};
+  function measure(k){
+    if (box[k]) return;
+    const s = sizeOf(k), ch = childKids[k];
+    if (!ch.length){ box[k] = { w: s.w, h: s.h, rows: [] }; return; }
+    ch.forEach(measure);
+    const items = ch.map(c => ({ k: c, w: box[c].w, h: box[c].h }));
+    const rows = wrapRows(items, Math.max(s.w, MAX_ROW));
     // Stagger alternate rows by a quarter-cell each way (so adjacent rows differ by half a card),
     // breaking the rigid column grid into a brick pattern that reads less "vertical".
     const cell = Math.max(...items.map(x => x.w)) + GAP_X;
     const stagger = rows.length > 1 ? cell / 4 : 0;
     let bw = s.w, bh = s.h + GAP_Y;
     rows.forEach(r => {
-      bw = Math.max(bw, r.reduce((a, x) => a + x.w, 0) + GAP_X * (r.length - 1));
+      bw = Math.max(bw, rowWidth(r));
       bh += Math.max(...r.map(x => x.h)) + ROW_GAP;
     });
     box[k] = { w: bw + stagger * 2, h: bh - ROW_GAP, rows, stagger };
@@ -282,7 +353,7 @@ function render(){
     if (!b.rows.length) return;
     let y = top + s.h + GAP_Y;
     b.rows.forEach((r, ri) => {
-      const rW = r.reduce((a, x) => a + x.w, 0) + GAP_X * (r.length - 1);
+      const rW = rowWidth(r);
       const shift = (ri % 2 ? 1 : -1) * (b.stagger || 0);   // alternate rows offset for a brick layout
       let x = cx - rW / 2 + shift;
       r.forEach(it => { place(it.k, x + it.w / 2, y); x += it.w + GAP_X; });
@@ -290,36 +361,59 @@ function render(){
     });
   }
 
-  // dagre lays out the top-level nodes (anything not nested under a non-epic parent), each
-  // inflated to reserve room for its nested sub-tree; cross-sub-tree links drive the placement.
-  const roots = DATA.nodes.map(n => n.key).filter(k => !isNested(k));
+  // Top-level nodes are anything not nested under a parent, each inflated to reserve room for its
+  // nested sub-tree. Each link runs from its head (the dependent end) to its tail, so after the
+  // mirror every blocker lands above the task it feeds.
+  const roots = nodes.map(n => n.key).filter(k => !isNested(k));
   roots.forEach(measure);
-  const g = new dagre.graphlib.Graph();
-  g.setGraph({ rankdir:'TB', nodesep:34, ranksep:78, marginx:28, marginy:28 });
-  g.setDefaultEdgeLabel(() => ({}));
-  roots.forEach(k => g.setNode(k, { width: box[k].w, height: box[k].h }));
-  // Each edge runs from its head (the dependent end, closer to the epic) to its tail, so after the
-  // mirror every blocker and sub-task lands further from the epic than the task it feeds.
-  // Every direct child of the epic stays on the row next to the epic: only the epic itself may rank
-  // closer. Otherwise a deep dependency reaching into a child's sub-tree would drag that whole child
-  // (and its siblings would no longer line up) far away from the epic.
-  const epicChild = k => childParent[k] === epic;
-  DATA.edges.forEach(e => {
+  const links = [];
+  edges.forEach(e => {
     const a = rootOf(e.head), b = rootOf(e.from === e.head ? e.to : e.from);
-    if (a === b || !g.hasNode(a) || !g.hasNode(b)) return;
-    if (epicChild(b) && a !== epic) return;
-    g.setEdge(a, b, { weight: e.kind === 'child' ? 30 : 1, minlen: 1 });
+    if (a !== b && box[a] && box[b]) links.push([a, b]);
   });
-  dagre.layout(g);
+
+  // Roots with a link form the flow, laid out by dagre. Roots with no link at all are collected in
+  // a strip above the flow instead, next to the other tasks that can be started right away.
+  const linked = new Set(links.flat());
+  const flow = roots.filter(k => linked.has(k));
+  const loose = roots.filter(k => !linked.has(k));
+  const PAD = 28, STRIP_GAP = 96;
+
+  const g = new dagre.graphlib.Graph();
+  g.setGraph({ rankdir:'TB', nodesep:34, ranksep:78, marginx:PAD, marginy:PAD });
+  g.setDefaultEdgeLabel(() => ({}));
+  flow.forEach(k => g.setNode(k, { width: box[k].w, height: box[k].h }));
+  links.forEach(([a, b]) => g.setEdge(a, b, { minlen: 1 }));
+  let flowW = 0, flowH = 0;
+  if (flow.length){
+    dagre.layout(g);
+    flowW = g.graph().width;
+    flowH = g.graph().height;
+  }
+
+  // The strip wraps to the width of the flow, or a sensible minimum when the flow is narrow or empty.
+  const strip = wrapRows(loose.map(k => ({ k, w: box[k].w, h: box[k].h })), Math.max(flowW - PAD * 2, 1100));
+  const W = Math.max(flowW, ...strip.map(r => rowWidth(r) + PAD * 2));
 
   // dagre centres each box on its rank line, so cards with tall sub-trees would sit higher than
   // their shorter siblings. Align every card on a rank to a common top (the highest box-top on that
   // rank) so siblings share an exact height; their sub-trees still hang below from that line.
+  const flowLeft = (W - flowW) / 2;
   const rankTop = {};
-  roots.forEach(k => { const nd = g.node(k), rk = Math.round(nd.y), t = nd.y - box[k].h / 2; if (rankTop[rk] === undefined || t < rankTop[rk]) rankTop[rk] = t; });
-  roots.forEach(k => { const nd = g.node(k); place(k, nd.x, rankTop[Math.round(nd.y)]); });
+  flow.forEach(k => { const nd = g.node(k), rk = Math.round(nd.y), t = nd.y - box[k].h / 2; if (rankTop[rk] === undefined || t < rankTop[rk]) rankTop[rk] = t; });
+  flow.forEach(k => { const nd = g.node(k); place(k, flowLeft + nd.x, rankTop[Math.round(nd.y)]); });
 
-  const W = g.graph().width, H = g.graph().height;
+  // In the unmirrored space the strip goes below the flow (dagre's margin already pads the flow's
+  // bottom), so it ends up on top. Its rows are placed in reverse so the first row still reads first
+  // once mirrored.
+  let top = flow.length ? flowH - PAD + STRIP_GAP : PAD;
+  strip.slice().reverse().forEach(r => {
+    let x = W / 2 - rowWidth(r) / 2;
+    r.forEach(it => { place(it.k, x + it.w / 2, top); x += it.w + GAP_X; });
+    top += Math.max(...r.map(it => it.h)) + GAP_Y;
+  });
+
+  const H = strip.length ? top - GAP_Y + PAD : flowH;
   Object.keys(pos).forEach(k => {
     const p = pos[k];
     p.y = H - p.y;
@@ -337,7 +431,7 @@ function render(){
     <marker id="ah-child" markerWidth="8" markerHeight="8" refX="6.8" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#9aa3c0"/></marker>
     <marker id="ah-cause" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#c4b5fd"/></marker>
   </defs>`;
-  const elist = DATA.edges.map((e, idx) => ({ e, idx })).filter(x => {
+  const elist = edges.map((e, idx) => ({ e, idx })).filter(x => {
     if (!pos[x.e.from] || !pos[x.e.to]) return false;
     // drop a child's line to its parent if the child was re-nested under a blocking sibling
     if (x.e.kind === 'child'){
@@ -397,7 +491,7 @@ function render(){
 
   const MARGIN = 12, STUB = MARGIN + 8;
   const rect = {};
-  DATA.nodes.forEach(n => {
+  nodes.forEach(n => {
     const p = pos[n.key]; if (!p) return;
     rect[n.key] = { x0: p.x - p.w / 2 - MARGIN, x1: p.x + p.w / 2 + MARGIN, y0: p.y - p.h / 2 - MARGIN, y1: p.y + p.h / 2 + MARGIN };
   });
@@ -559,12 +653,16 @@ function applyView(){
 }
 function fitView(){
   const W = stage.offsetWidth, H = stage.offsetHeight;
-  const vw = window.innerWidth, vh = window.innerHeight;
+  const vw = window.innerWidth;
   const pad = 24;
+  // Fit into the space below the header, so it never covers the top row of cards.
+  const header = document.getElementById('header');
+  const headTop = header.offsetTop + header.offsetHeight;
+  const vh = window.innerHeight - headTop;
   const k = Math.min((vw - pad) / W, (vh - pad) / H, 1.4);
   view.k = Math.max(k, 0.12);
   view.x = (vw - W * view.k) / 2;
-  view.y = (vh - H * view.k) / 2;
+  view.y = headTop + (vh - H * view.k) / 2;
   applyView();
 }
 document.getElementById('fit').addEventListener('click', fitView);

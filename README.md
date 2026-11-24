@@ -3,14 +3,16 @@
 Turns a Jira epic into an interactive dependency map. It fetches every open issue under the epic, follows
 their links, and writes a single self-contained HTML page you can pan, zoom and click through.
 
-![Example output](examples/demo-flow.png)
+![Example output](examples/demo-map.png)
 
 ## What it shows
 
-- The epic at the bottom, with its child issues laid out in a tree above it, each feeding down into its parent
-- Blocking links (orange) and "causes" links (dashed purple) between issues, including issues outside the epic
+- The epic as the page header, with its issues laid out as a flow of dependencies below it
+- Blocking links (orange) and "causes" links (dashed purple) between issues, including issues outside the epic, which are tagged as such
+- Sub-tasks above the issue they belong to, each feeding down into its parent
 - Each card's key, summary, type, status and assignee, linking back to Jira
-- Blockers are placed above the issue they block, so the order work has to happen in reads top to bottom and ends at the epic
+- Blockers are placed above the issue they block, so the order work has to happen reads top to bottom
+- Issues with no links at all are collected in a strip above the flow, so everything along the top can be started now
 
 Done, Closed and Resolved issues are left out.
 
