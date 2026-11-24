@@ -38,8 +38,17 @@
   #stage{position:relative;}
   #edges{position:absolute;top:0;left:0;overflow:visible;pointer-events:none;}
 
+  /* ---- hover focus: a hovered card's blockers, blocked tasks and links stay lit, the rest fade ---- */
+  .edge{transition:opacity .35s ease;}
+  .edge--faded{opacity:.1;}
+  .edge__halo,.edge__line{transition:stroke-width .3s ease;}
+  .edge--lit .edge__line{stroke-width:3.4px;}
+  .edge--lit .edge__halo{stroke-width:8px;}
+  .node--faded{filter:grayscale(.9) opacity(.35);}
+  .node.node--related{box-shadow:0 0 0 3px rgba(244,162,58,.45), 0 18px 40px -14px rgba(40,40,90,.42);}
+
   /* ---- nodes ---- */
-  .node{position:absolute;width:256px;padding:14px 15px;border-radius:16px;box-shadow:var(--shadow);cursor:pointer;opacity:0;animation:fade .5s ease forwards;transition:transform .18s ease, box-shadow .2s ease;text-decoration:none;color:inherit;display:block;}
+  .node{position:absolute;width:256px;padding:14px 15px;border-radius:16px;box-shadow:var(--shadow);cursor:pointer;opacity:0;animation:fade .5s ease forwards;transition:transform .18s ease, box-shadow .3s ease, filter .35s ease;text-decoration:none;color:inherit;display:block;}
   @keyframes fade{to{opacity:1;}}
   @keyframes fadeDim{to{opacity:.55;}}
   .node--dim{animation-name:fadeDim;}   /* Backlog tasks sit faded */
@@ -448,8 +457,8 @@ function render(){
     const dash = kind === 'cause' ? ' stroke-dasharray="7 5" stroke-linecap="round"' : '';   // block + child solid, cause dashed
     const op = kind === 'child' ? 0.85 : 0.95;
     const mk = arrow ? ` marker-end="url(#ah-${kind})"` : '';
-    return `<path d="${d}" fill="none" stroke="#f6f6fb" stroke-width="${w + 4}" opacity="0.95" stroke-linecap="round" stroke-linejoin="round"/>`
-         + `<path d="${d}" fill="none" stroke="${stroke}" stroke-width="${w}" opacity="${op}" stroke-linejoin="round"${mk}${dash}/>`;
+    return `<path class="edge__halo" d="${d}" fill="none" stroke="#f6f6fb" stroke-width="${w + 4}" opacity="0.95" stroke-linecap="round" stroke-linejoin="round"/>`
+         + `<path class="edge__line" d="${d}" fill="none" stroke="${stroke}" stroke-width="${w}" opacity="${op}" stroke-linejoin="round"${mk}${dash}/>`;
   };
   let edgesSvg = '';
 
@@ -635,12 +644,55 @@ function render(){
     const pathPts = mid
       ? [{ x: tp.x, y: tp.y }, a1, ...mid, a2, { x: hp.x, y: hp.y }]
       : [{ x: tp.x, y: tp.y }, a1, { x: a2.x, y: a1.y }, a2, { x: hp.x, y: hp.y }];  // last resort
-    edgesSvg += `<g>${seg(roundedPath(pathPts), e.kind, true)}</g>`;
+    edgesSvg += `<g class="edge" data-tail="${tailKey}" data-head="${headKey}">${seg(roundedPath(pathPts), e.kind, true)}</g>`;
   });
 
   svg.innerHTML = markup + edgesSvg;
 
+  setupFocus();
   fitView();
+}
+
+/**
+ * Hovering a card lights up the tasks it blocks or is blocked by (block and cause links) and the
+ * links between them, and fades every other card and link.
+ */
+function setupFocus(){
+  const edgeEls = [...svg.querySelectorAll('.edge')];
+  const depEls = edgeEls.filter(g => g.dataset.head);
+  const neighbours = {};
+  depEls.forEach(g => {
+    const { tail, head } = g.dataset;
+    (neighbours[tail] = neighbours[tail] || new Set()).add(head);
+    (neighbours[head] = neighbours[head] || new Set()).add(tail);
+  });
+
+  let clearTimer = null;
+  const focus = k => {
+    clearTimeout(clearTimer);
+    const near = neighbours[k] || new Set();
+    Object.keys(elById).forEach(n => {
+      elById[n].classList.toggle('node--faded', n !== k && !near.has(n));
+      elById[n].classList.toggle('node--related', near.has(n));
+    });
+    edgeEls.forEach(g => {
+      const lit = g.dataset.head === k || g.dataset.tail === k;
+      g.classList.toggle('edge--faded', !lit);
+      g.classList.toggle('edge--lit', lit);
+      // Lit links are moved to the end of the SVG so they draw over any line they cross
+      if (lit) svg.appendChild(g);
+    });
+  };
+  const clear = () => {
+    Object.values(elById).forEach(el => el.classList.remove('node--faded', 'node--related'));
+    edgeEls.forEach(g => g.classList.remove('edge--faded', 'edge--lit'));
+  };
+
+  Object.keys(elById).forEach(k => {
+    elById[k].addEventListener('mouseenter', () => { if (!panning) focus(k); });
+    // Clearing waits a moment, so moving straight from one card to another does not flash everything back
+    elById[k].addEventListener('mouseleave', () => { clearTimer = setTimeout(clear, 120); });
+  });
 }
 
 /* ---------- pan & zoom ---------- */
