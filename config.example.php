@@ -39,4 +39,9 @@ return [
     // {file} is replaced with the path of the generated page and {key} with the epic key.
     // 'publishCommand' => 'scp {file} user@server.example.com:/var/www/jira/{key}.html',
     'publishCommand' => null,
+
+    // Optional URL printed after a successful publish, so you can open the page straight away.
+    // {key} is replaced with the epic key.
+    // 'publishUrl' => 'https://server.example.com/jira/{key}.html',
+    'publishUrl' => null,
 ];
