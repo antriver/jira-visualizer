@@ -44,14 +44,15 @@
   .edge__halo,.edge__line{transition:stroke-width .3s ease;}
   .edge--lit .edge__line{stroke-width:3.4px;}
   .edge--lit .edge__halo{stroke-width:8px;}
-  .node--faded{filter:grayscale(.9) opacity(.35);}
+  .node.node--faded{filter:grayscale(.9) opacity(.35);}
   .node.node--related{box-shadow:0 0 0 3px rgba(244,162,58,.45), 0 18px 40px -14px rgba(40,40,90,.42);}
 
   /* ---- nodes ---- */
   .node{position:absolute;width:256px;padding:14px 15px;border-radius:16px;box-shadow:var(--shadow);cursor:pointer;opacity:0;animation:fade .5s ease forwards;transition:transform .18s ease, box-shadow .3s ease, filter .35s ease;text-decoration:none;color:inherit;display:block;}
   @keyframes fade{to{opacity:1;}}
-  @keyframes fadeDim{to{opacity:.55;}}
-  .node--dim{animation-name:fadeDim;}   /* Backlog tasks sit faded */
+  /* Backlog tasks sit faded, but come back to full strength when hovered or lit by a hovered chain */
+  .node--dim{filter:opacity(.55);}
+  .node.node--dim:hover,.node.node--dim.node--related{filter:none;}
   .node:hover{transform:translateY(-3px) scale(1.018);box-shadow:0 18px 40px -14px rgba(40,40,90,.42);z-index:6;}
   .node__key{font-weight:700;font-size:16px;color:#2b2b3a;}
   .node__summary{font-size:16px;line-height:1.4;color:#33333f;margin:8px 0 11px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;}
@@ -654,29 +655,37 @@ function render(){
 }
 
 /**
- * Hovering a card lights up the tasks it blocks or is blocked by (block and cause links) and the
- * links between them, and fades every other card and link.
+ * Hovering a card lights up its whole dependency chain (block and cause links): everything it waits
+ * on, everything that waits on it, and the links between them. Every other card and link fades.
  */
 function setupFocus(){
   const edgeEls = [...svg.querySelectorAll('.edge')];
   const depEls = edgeEls.filter(g => g.dataset.head);
-  const neighbours = {};
+  const blockers = {}, blocked = {};
   depEls.forEach(g => {
     const { tail, head } = g.dataset;
-    (neighbours[tail] = neighbours[tail] || new Set()).add(head);
-    (neighbours[head] = neighbours[head] || new Set()).add(tail);
+    (blockers[head] = blockers[head] || []).push(tail);
+    (blocked[tail] = blocked[tail] || []).push(head);
   });
+  // Walks one direction only, so a blocker's other dependents are not pulled into the chain
+  const walk = (k, next) => {
+    const seen = new Set([k]), queue = [k];
+    while (queue.length) (next[queue.shift()] || []).forEach(n => { if (!seen.has(n)){ seen.add(n); queue.push(n); } });
+    return seen;
+  };
 
   let clearTimer = null;
   const focus = k => {
     clearTimeout(clearTimer);
-    const near = neighbours[k] || new Set();
+    const up = walk(k, blockers), down = walk(k, blocked);
     Object.keys(elById).forEach(n => {
-      elById[n].classList.toggle('node--faded', n !== k && !near.has(n));
-      elById[n].classList.toggle('node--related', near.has(n));
+      const inChain = n !== k && (up.has(n) || down.has(n));
+      elById[n].classList.toggle('node--faded', n !== k && !inChain);
+      elById[n].classList.toggle('node--related', inChain);
     });
     edgeEls.forEach(g => {
-      const lit = g.dataset.head === k || g.dataset.tail === k;
+      const { tail, head } = g.dataset;
+      const lit = !!head && ((up.has(tail) && up.has(head)) || (down.has(tail) && down.has(head)));
       g.classList.toggle('edge--faded', !lit);
       g.classList.toggle('edge--lit', lit);
       // Lit links are moved to the end of the SVG so they draw over any line they cross
